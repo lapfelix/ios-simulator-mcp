@@ -32,7 +32,7 @@ The installation section in [IDB](https://fbidb.io/docs/installation/) is a litt
    ```
 5. Verify installation:
    ```sh
-   idb --version
+   idb -h
    ```
 
 ### Using asdf (Python version manager)
@@ -41,15 +41,17 @@ The installation section in [IDB](https://fbidb.io/docs/installation/) is a litt
    ```sh
    brew install asdf
    ```
-2. Add the [Python plugin](https://github.com/asdf-community/asdf-python) and install Python:
+2. Add the [Python plugin](https://github.com/asdf-community/asdf-python), install Python, set to global version (see asdf docs for [set](https://asdf-vm.com/manage/versions.html#set-version) and [global](https://asdf-vm.com/guide/getting-started-legacy.html#global) to do isolated installs):
    ```sh
    asdf plugin add python
    asdf install python latest
    asdf global python latest
+   asdf set python <latest-version> -u
+   asdf reshim
    ```
 3. Install idb using pip:
    ```sh
-   pip install --user fb-idb
+   python -m pip install --user fb-idb
    ```
 4. Ensure your user base binary directory is in your PATH (often `~/.local/bin`):
    ```sh
@@ -58,7 +60,7 @@ The installation section in [IDB](https://fbidb.io/docs/installation/) is a litt
    ```
 5. Verify installation:
    ```sh
-   idb --version
+   idb -h
    ```
 
 ## 3. Common Issues & Fixes
