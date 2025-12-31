@@ -3,11 +3,11 @@
   "version": "1.5.2",
   "description": "MCP server for interacting with the iOS simulator",
   "bin": {
-    "ios-simulator-mcp": "./build/index.js"
+    "ios-simulator-mcp": "build/index.js"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/joshuayoes/ios-simulator-mcp.git"
+    "url": "git+https://github.com/joshuayoes/ios-simulator-mcp.git"
   },
   "files": [
     "build",
