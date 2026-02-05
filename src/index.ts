@@ -156,12 +156,13 @@ async function getBootedDeviceId(
 const UI_COMPRESSION_MODES = [
   "raw",
   "compact",
+  "compact_full_precision",
   "compact_round",
   "table",
   "table_dedup",
 ] as const;
 type UiCompressionMode = (typeof UI_COMPRESSION_MODES)[number];
-const DEFAULT_UI_COMPRESSION_MODE: UiCompressionMode = "table_dedup";
+const DEFAULT_UI_COMPRESSION_MODE: UiCompressionMode = "compact";
 
 const UI_DROP_KEYS = new Set(["AXFrame", "role_description", "role"]);
 const UI_KEY_MAP: Record<string, string> = {
@@ -400,7 +401,12 @@ function compressUiTree(value: unknown, mode: UiCompressionMode): unknown {
   output = normalizeFrame(output);
   output = shortenKeys(output);
 
-  if (mode === "compact_round" || mode === "table" || mode === "table_dedup") {
+  if (
+    mode === "compact" ||
+    mode === "compact_round" ||
+    mode === "table" ||
+    mode === "table_dedup"
+  ) {
     output = roundNumbers(output, 1);
   }
 
@@ -545,7 +551,7 @@ if (!isToolFiltered("ui_describe_all")) {
         .enum(UI_COMPRESSION_MODES)
         .optional()
         .describe(
-          "Compression mode for the returned tree. raw, compact, compact_round, table, or table_dedup. Default: table_dedup."
+          "Compression mode for the returned tree. raw, compact, compact_full_precision, table, or table_dedup. Default: compact."
         ),
     },
     { title: "Describe All UI Elements", readOnlyHint: true, openWorldHint: true },
@@ -614,7 +620,7 @@ if (!isToolFiltered("ui_describe_search")) {
         .enum(UI_COMPRESSION_MODES)
         .optional()
         .describe(
-          "Compression mode for the returned tree. raw, compact, compact_round, table, or table_dedup. Default: table_dedup."
+          "Compression mode for the returned tree. raw, compact, compact_full_precision, table, or table_dedup. Default: compact."
         ),
     },
     { title: "Search UI Elements", readOnlyHint: true, openWorldHint: true },

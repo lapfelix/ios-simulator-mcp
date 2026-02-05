@@ -46,9 +46,9 @@ This project has been featured and mentioned in various publications and resourc
   udid?: string;
   /**
    * Compression mode for the returned tree.
-   * raw, compact, compact_round, table, or table_dedup. Default: table_dedup.
+   * raw, compact, compact_full_precision, table, or table_dedup. Default: compact.
    */
-  compression?: "raw" | "compact" | "compact_round" | "table" | "table_dedup";
+  compression?: "raw" | "compact" | "compact_full_precision" | "table" | "table_dedup";
 }
 ```
 
@@ -58,8 +58,8 @@ This project has been featured and mentioned in various publications and resourc
 
 - `type` -> `t`, `AXLabel` -> `l`, `AXUniqueId` -> `id`, `children` -> `c`, `frame` -> `f`, `title` -> `ti`, `help` -> `h`, `AXValue` -> `v`
 - `frame` becomes `f: [x, y, width, height]`
-- `compact` drops nulls, empty lists, defaults `enabled:true`, `content_required:false`, and redundant `AXFrame`, `role_description`, `role`
-- `compact_round` rounds floats to 1 decimal and coerces integers when possible
+- `compact_full_precision` drops nulls, empty lists, defaults `enabled:true`, `content_required:false`, and redundant `AXFrame`, `role_description`, `role`
+- `compact` does `compact_full_precision` plus rounds floats to 1 decimal and coerces integers when possible
 - `table` wraps output as `{ s: string[], n: <tree with strings replaced by indexes> }`
 - `table_dedup` removes identical siblings under the same parent
 
@@ -82,9 +82,9 @@ This project has been featured and mentioned in various publications and resourc
   udid?: string;
   /**
    * Compression mode for the returned tree.
-   * raw, compact, compact_round, table, or table_dedup. Default: table_dedup.
+   * raw, compact, compact_full_precision, table, or table_dedup. Default: compact.
    */
-  compression?: "raw" | "compact" | "compact_round" | "table" | "table_dedup";
+  compression?: "raw" | "compact" | "compact_full_precision" | "table" | "table_dedup";
 }
 ```
 
