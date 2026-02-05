@@ -44,8 +44,51 @@ This project has been featured and mentioned in various publications and resourc
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
    */
   udid?: string;
+  /**
+   * Compression mode for the returned tree.
+   * raw, compact, compact_round, table, or table_dedup. Default: table_dedup.
+   */
+  compression?: "raw" | "compact" | "compact_round" | "table" | "table_dedup";
 }
 ```
+
+**Output:** By default, returns a compressed JSON tree (minified). Use `compression: "raw"` for the original IDB JSON.
+
+**Compression format (compact and above):**
+
+- `type` -> `t`, `AXLabel` -> `l`, `AXUniqueId` -> `id`, `children` -> `c`, `frame` -> `f`, `title` -> `ti`, `help` -> `h`, `AXValue` -> `v`
+- `frame` becomes `f: [x, y, width, height]`
+- `compact` drops nulls, empty lists, defaults `enabled:true`, `content_required:false`, and redundant `AXFrame`, `role_description`, `role`
+- `compact_round` rounds floats to 1 decimal and coerces integers when possible
+- `table` wraps output as `{ s: string[], n: <tree with strings replaced by indexes> }`
+- `table_dedup` removes identical siblings under the same parent
+
+### `ui_describe_search`
+
+**Description:** Describes accessibility info for elements whose labels match a search term, returning only matching elements and their parents
+
+**Parameters:**
+
+```typescript
+{
+  /**
+   * Case-insensitive substring to match against accessibility labels and related fields
+   */
+  term: string;
+  /**
+   * Udid of target, can also be set with the IDB_UDID env var
+   * Format: UUID (8-4-4-4-12 hexadecimal characters)
+   */
+  udid?: string;
+  /**
+   * Compression mode for the returned tree.
+   * raw, compact, compact_round, table, or table_dedup. Default: table_dedup.
+   */
+  compression?: "raw" | "compact" | "compact_round" | "table" | "table_dedup";
+}
+```
+
+**Output:** Same compression behavior as `ui_describe_all`.
 
 ### `ui_tap`
 

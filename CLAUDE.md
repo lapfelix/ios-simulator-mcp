@@ -41,6 +41,7 @@ The server provides these tools (can be filtered via environment variables):
 - `get_booted_sim_id` - Get the currently booted simulator ID
 - `open_simulator` - Open the iOS Simulator application
 - `ui_describe_all` - Get accessibility info for the entire screen
+- `ui_describe_search` - Search accessibility labels and return matching elements with parents
 - `ui_tap` - Tap at coordinates
 - `ui_type` - Input text
 - `ui_swipe` - Swipe gesture

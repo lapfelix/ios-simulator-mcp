@@ -153,6 +153,313 @@ async function getBootedDeviceId(
   return actualDeviceId;
 }
 
+const UI_COMPRESSION_MODES = [
+  "raw",
+  "compact",
+  "compact_round",
+  "table",
+  "table_dedup",
+] as const;
+type UiCompressionMode = (typeof UI_COMPRESSION_MODES)[number];
+const DEFAULT_UI_COMPRESSION_MODE: UiCompressionMode = "table_dedup";
+
+const UI_DROP_KEYS = new Set(["AXFrame", "role_description", "role"]);
+const UI_KEY_MAP: Record<string, string> = {
+  type: "t",
+  AXLabel: "l",
+  AXUniqueId: "id",
+  children: "c",
+  frame: "f",
+  help: "h",
+  title: "ti",
+  AXValue: "v",
+  custom_actions: "a",
+  content_required: "cr",
+  enabled: "e",
+  subrole: "sr",
+};
+const UI_SEARCH_FIELDS = [
+  "AXLabel",
+  "title",
+  "help",
+  "AXValue",
+  "AXUniqueId",
+] as const;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function pruneUiTree(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(pruneUiTree);
+  }
+  if (!isPlainObject(value)) {
+    return value;
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (raw === null) continue;
+    if (UI_DROP_KEYS.has(key)) continue;
+    if (key === "enabled" && raw === true) continue;
+    if (key === "content_required" && raw === false) continue;
+    if (
+      (key === "children" || key === "custom_actions") &&
+      Array.isArray(raw) &&
+      raw.length === 0
+    )
+      continue;
+
+    const pruned = pruneUiTree(raw);
+    if (
+      (key === "children" || key === "custom_actions") &&
+      Array.isArray(pruned) &&
+      pruned.length === 0
+    )
+      continue;
+
+    result[key] = pruned;
+  }
+
+  return result;
+}
+
+function normalizeFrame(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(normalizeFrame);
+  }
+  if (!isPlainObject(value)) {
+    return value;
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (key === "frame" && isPlainObject(raw)) {
+      const frame = raw as Record<string, unknown>;
+      const x = frame.x;
+      const y = frame.y;
+      const width = frame.width;
+      const height = frame.height;
+      if (
+        typeof x === "number" &&
+        typeof y === "number" &&
+        typeof width === "number" &&
+        typeof height === "number"
+      ) {
+        result[key] = [x, y, width, height];
+        continue;
+      }
+    }
+
+    result[key] = normalizeFrame(raw);
+  }
+
+  return result;
+}
+
+function shortenKeys(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(shortenKeys);
+  }
+  if (!isPlainObject(value)) {
+    return value;
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    const mappedKey = UI_KEY_MAP[key] ?? key;
+    result[mappedKey] = shortenKeys(raw);
+  }
+
+  return result;
+}
+
+function roundNumbers(value: unknown, decimals: number): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => roundNumbers(entry, decimals));
+  }
+  if (isPlainObject(value)) {
+    const result: Record<string, unknown> = {};
+    for (const [key, raw] of Object.entries(value)) {
+      result[key] = roundNumbers(raw, decimals);
+    }
+    return result;
+  }
+  if (typeof value === "number") {
+    const factor = Math.pow(10, decimals);
+    const rounded = Math.round(value * factor) / factor;
+    const normalized =
+      Math.abs(rounded - Math.round(rounded)) < 1e-9
+        ? Math.round(rounded)
+        : rounded;
+    return Object.is(normalized, -0) ? 0 : normalized;
+  }
+  return value;
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  if (isPlainObject(value)) {
+    const keys = Object.keys(value).sort();
+    const entries = keys.map(
+      (key) =>
+        `${JSON.stringify(key)}:${stableStringify(
+          (value as Record<string, unknown>)[key]
+        )}`
+    );
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function dedupSiblings(value: unknown): { node: unknown; removed: number } {
+  if (Array.isArray(value)) {
+    let removed = 0;
+    const list = value.map((entry) => {
+      const { node, removed: entryRemoved } = dedupSiblings(entry);
+      removed += entryRemoved;
+      return node;
+    });
+    return { node: list, removed };
+  }
+  if (!isPlainObject(value)) {
+    return { node: value, removed: 0 };
+  }
+
+  let removed = 0;
+  const result: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if ((key === "children" || key === "c") && Array.isArray(raw)) {
+      const seen = new Set<string>();
+      const children: unknown[] = [];
+      for (const child of raw) {
+        const { node: childNode, removed: childRemoved } = dedupSiblings(child);
+        removed += childRemoved;
+        const signature = stableStringify(childNode);
+        if (seen.has(signature)) {
+          removed += 1;
+          continue;
+        }
+        seen.add(signature);
+        children.push(childNode);
+      }
+      result[key] = children;
+      continue;
+    }
+
+    const { node, removed: entryRemoved } = dedupSiblings(raw);
+    removed += entryRemoved;
+    result[key] = node;
+  }
+
+  return { node: result, removed };
+}
+
+function buildStringTable(value: unknown): { s: string[]; n: unknown } {
+  const strings: string[] = [];
+  const index = new Map<string, number>();
+
+  const intern = (input: string) => {
+    const existing = index.get(input);
+    if (existing !== undefined) return existing;
+    const id = strings.length;
+    strings.push(input);
+    index.set(input, id);
+    return id;
+  };
+
+  const walk = (node: unknown): unknown => {
+    if (Array.isArray(node)) {
+      return node.map(walk);
+    }
+    if (isPlainObject(node)) {
+      const result: Record<string, unknown> = {};
+      for (const [key, raw] of Object.entries(node)) {
+        result[key] = walk(raw);
+      }
+      return result;
+    }
+    if (typeof node === "string") {
+      return intern(node);
+    }
+    return node;
+  };
+
+  return { s: strings, n: walk(value) };
+}
+
+function compressUiTree(value: unknown, mode: UiCompressionMode): unknown {
+  if (mode === "raw") {
+    return value;
+  }
+
+  let output = pruneUiTree(value);
+  output = normalizeFrame(output);
+  output = shortenKeys(output);
+
+  if (mode === "compact_round" || mode === "table" || mode === "table_dedup") {
+    output = roundNumbers(output, 1);
+  }
+
+  if (mode === "table_dedup") {
+    output = dedupSiblings(output).node;
+  }
+
+  if (mode === "table" || mode === "table_dedup") {
+    output = buildStringTable(output);
+  }
+
+  return output;
+}
+
+function nodeMatchesSearch(node: Record<string, unknown>, needle: string): boolean {
+  const lowered = needle.toLowerCase();
+  for (const field of UI_SEARCH_FIELDS) {
+    const value = node[field];
+    if (typeof value === "string" && value.toLowerCase().includes(lowered)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function filterUiTree(value: unknown, term: string): unknown {
+  const visit = (node: unknown): unknown | null => {
+    if (!isPlainObject(node)) {
+      return null;
+    }
+
+    const rawChildren = (node as Record<string, unknown>).children;
+    const children = Array.isArray(rawChildren) ? rawChildren : [];
+    const filteredChildren = children
+      .map(visit)
+      .filter((child): child is unknown => child !== null);
+    const isMatch = nodeMatchesSearch(node, term);
+
+    if (!isMatch && filteredChildren.length === 0) {
+      return null;
+    }
+
+    const result: Record<string, unknown> = { ...node };
+    if (rawChildren !== undefined || filteredChildren.length > 0) {
+      result.children = filteredChildren;
+    }
+
+    return result;
+  };
+
+  if (Array.isArray(value)) {
+    return value
+      .map(visit)
+      .filter((node): node is unknown => node !== null);
+  }
+
+  return visit(value) ?? [];
+}
+
 // Register tools only if they're not filtered
 if (!isToolFiltered("get_booted_sim_id")) {
   server.tool(
@@ -234,9 +541,15 @@ if (!isToolFiltered("ui_describe_all")) {
         .regex(UDID_REGEX)
         .optional()
         .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      compression: z
+        .enum(UI_COMPRESSION_MODES)
+        .optional()
+        .describe(
+          "Compression mode for the returned tree. raw, compact, compact_round, table, or table_dedup. Default: table_dedup."
+        ),
     },
     { title: "Describe All UI Elements", readOnlyHint: true, openWorldHint: true },
-    async ({ udid }) => {
+    async ({ udid, compression }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
@@ -249,9 +562,20 @@ if (!isToolFiltered("ui_describe_all")) {
           "--nested"
         );
 
+        const mode = compression ?? DEFAULT_UI_COMPRESSION_MODE;
+        if (mode === "raw") {
+          return {
+            isError: false,
+            content: [{ type: "text", text: stdout }],
+          };
+        }
+
+        const uiData = JSON.parse(stdout);
+        const compressed = compressUiTree(uiData, mode);
+
         return {
           isError: false,
-          content: [{ type: "text", text: stdout }],
+          content: [{ type: "text", text: JSON.stringify(compressed) }],
         };
       } catch (error) {
         return {
@@ -261,6 +585,77 @@ if (!isToolFiltered("ui_describe_all")) {
               type: "text",
               text: errorWithTroubleshooting(
                 `Error describing all of the ui: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
+if (!isToolFiltered("ui_describe_search")) {
+  server.tool(
+    "ui_describe_search",
+    "Describes accessibility info for elements whose labels match a search term, returning only matching elements and their parents",
+    {
+      term: z
+        .string()
+        .min(1)
+        .describe(
+          "Case-insensitive substring to match against accessibility labels and related fields"
+        ),
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      compression: z
+        .enum(UI_COMPRESSION_MODES)
+        .optional()
+        .describe(
+          "Compression mode for the returned tree. raw, compact, compact_round, table, or table_dedup. Default: table_dedup."
+        ),
+    },
+    { title: "Search UI Elements", readOnlyHint: true, openWorldHint: true },
+    async ({ term, udid, compression }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        const { stdout } = await idb(
+          "ui",
+          "describe-all",
+          "--udid",
+          actualUdid,
+          "--json",
+          "--nested"
+        );
+
+        const uiData = JSON.parse(stdout);
+        const filtered = filterUiTree(uiData, term);
+        const mode = compression ?? DEFAULT_UI_COMPRESSION_MODE;
+
+        if (mode === "raw") {
+          return {
+            isError: false,
+            content: [{ type: "text", text: JSON.stringify(filtered) }],
+          };
+        }
+
+        const compressed = compressUiTree(filtered, mode);
+
+        return {
+          isError: false,
+          content: [{ type: "text", text: JSON.stringify(compressed) }],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error searching ui elements: ${toError(error).message}`
               ),
             },
           ],
