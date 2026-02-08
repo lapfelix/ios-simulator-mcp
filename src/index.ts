@@ -72,7 +72,21 @@ function getIdbPath(): string {
  * @see https://fbidb.io/docs/commands for documentation of available idb commands
  */
 async function idb(...args: string[]) {
-  return run(getIdbPath(), args);
+  try {
+    return await run(getIdbPath(), args);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err && err.code === "ENOENT") {
+      throw new Error(
+        "Facebook IDB is not installed or not on your PATH. Install it with one of these options:\n" +
+          "- pipx install fb-idb\n" +
+          "- brew install python && pip3 install --user fb-idb\n" +
+          "- asdf install python latest && python -m pip install --user fb-idb\n" +
+          "Then ensure the idb binary is on your PATH (often ~/.local/bin), or set IOS_SIMULATOR_MCP_IDB_PATH."
+      );
+    }
+    throw error;
+  }
 }
 
 // Read filtered tools from environment variable
