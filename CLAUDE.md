@@ -44,6 +44,7 @@ The server provides these tools (can be filtered via environment variables):
 - `ui_describe_search` - Search accessibility labels and return matching elements with parents
 - `ui_tap` - Tap at coordinates
 - `ui_type` - Input text
+- `ui_type_in_field` - Find a text field by label text, focus it, and type
 - `ui_swipe` - Swipe gesture
 - `ui_describe_point` - Get element at specific coordinates
 - `ui_view` - Get compressed screenshot as base64 JPEG

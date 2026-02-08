@@ -135,6 +135,31 @@ This project has been featured and mentioned in various publications and resourc
 }
 ```
 
+### `ui_type_in_field`
+
+**Description:** Find a text input field by label/accessibility text, focus it, and type into it in the iOS Simulator
+
+**Parameters:**
+
+```typescript
+{
+  /**
+   * Udid of target, can also be set with the IDB_UDID env var
+   * Format: UUID (8-4-4-4-12 hexadecimal characters)
+   */
+  udid?: string;
+  /**
+   * Case-insensitive substring used to find a text input by AXLabel, AXUniqueId, title, help, or AXValue
+   */
+  field_query: string;
+  /**
+   * Text to input
+   * Format: ASCII printable characters only
+   */
+  text: string;
+}
+```
+
 ### `ui_swipe`
 
 **Description:** Swipe on the screen in the iOS Simulator

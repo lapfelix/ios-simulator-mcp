@@ -186,6 +186,17 @@ const UI_SEARCH_FIELDS = [
   "AXValue",
   "AXUniqueId",
 ] as const;
+const UI_TEXT_INPUT_TYPES = new Set([
+  "TextField",
+  "SecureTextField",
+  "TextView",
+  "SearchField",
+]);
+const UI_TEXT_INPUT_ROLES = new Set([
+  "AXTextField",
+  "AXTextArea",
+  "AXSearchField",
+]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -466,6 +477,259 @@ function filterUiTree(value: unknown, term: string): unknown {
   return visit(value) ?? [];
 }
 
+function isTextInputNode(node: Record<string, unknown>): boolean {
+  const type = node.type;
+  if (typeof type === "string" && UI_TEXT_INPUT_TYPES.has(type)) {
+    return true;
+  }
+
+  const role = node.role;
+  if (typeof role === "string" && UI_TEXT_INPUT_ROLES.has(role)) {
+    return true;
+  }
+
+  return false;
+}
+
+function getNodeLabel(node: Record<string, unknown>): string {
+  for (const field of UI_SEARCH_FIELDS) {
+    const value = node[field];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return "<unlabeled>";
+}
+
+function getNodeId(node: Record<string, unknown>): string | null {
+  const value = node.AXUniqueId;
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+  return null;
+}
+
+function getNodeFrame(
+  node: Record<string, unknown>
+): { x: number; y: number; width: number; height: number } | null {
+  const frame = node.frame;
+  if (Array.isArray(frame) && frame.length >= 4) {
+    const [x, y, width, height] = frame;
+    if (
+      typeof x === "number" &&
+      typeof y === "number" &&
+      typeof width === "number" &&
+      typeof height === "number"
+    ) {
+      return { x, y, width, height };
+    }
+  }
+
+  if (isPlainObject(frame)) {
+    const x = frame.x;
+    const y = frame.y;
+    const width = frame.width;
+    const height = frame.height;
+    if (
+      typeof x === "number" &&
+      typeof y === "number" &&
+      typeof width === "number" &&
+      typeof height === "number"
+    ) {
+      return { x, y, width, height };
+    }
+  }
+
+  return null;
+}
+
+function getNodeFrameCenter(
+  node: Record<string, unknown>
+): { x: number; y: number } | null {
+  const frame = node.frame;
+
+  if (Array.isArray(frame) && frame.length >= 4) {
+    const [x, y, width, height] = frame;
+    if (
+      typeof x === "number" &&
+      typeof y === "number" &&
+      typeof width === "number" &&
+      typeof height === "number"
+    ) {
+      return {
+        x: x + width / 2,
+        y: y + height / 2,
+      };
+    }
+  }
+
+  if (isPlainObject(frame)) {
+    const x = frame.x;
+    const y = frame.y;
+    const width = frame.width;
+    const height = frame.height;
+    if (
+      typeof x === "number" &&
+      typeof y === "number" &&
+      typeof width === "number" &&
+      typeof height === "number"
+    ) {
+      return {
+        x: x + width / 2,
+        y: y + height / 2,
+      };
+    }
+  }
+
+  return null;
+}
+
+function collectMatchingNodes(
+  value: unknown,
+  term: string
+): Record<string, unknown>[] {
+  const nodes: Record<string, unknown>[] = [];
+
+  const visit = (node: unknown) => {
+    if (Array.isArray(node)) {
+      for (const entry of node) {
+        visit(entry);
+      }
+      return;
+    }
+
+    if (!isPlainObject(node)) {
+      return;
+    }
+
+    if (nodeMatchesSearch(node, term)) {
+      nodes.push(node);
+    }
+
+    const children = node.children;
+    if (Array.isArray(children)) {
+      for (const child of children) {
+        visit(child);
+      }
+    }
+  };
+
+  visit(value);
+  return nodes;
+}
+
+function collectTextInputNodes(value: unknown): Record<string, unknown>[] {
+  const nodes: Record<string, unknown>[] = [];
+
+  const visit = (node: unknown) => {
+    if (Array.isArray(node)) {
+      for (const entry of node) {
+        visit(entry);
+      }
+      return;
+    }
+
+    if (!isPlainObject(node)) {
+      return;
+    }
+
+    if (isTextInputNode(node)) {
+      nodes.push(node);
+    }
+
+    const children = node.children;
+    if (Array.isArray(children)) {
+      for (const child of children) {
+        visit(child);
+      }
+    }
+  };
+
+  visit(value);
+  return nodes;
+}
+
+function roundToDecimals(value: number, decimals: number): number {
+  const factor = Math.pow(10, decimals);
+  const rounded = Math.round(value * factor) / factor;
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+function framesMatch(
+  left: { x: number; y: number; width: number; height: number },
+  right: { x: number; y: number; width: number; height: number },
+  decimals = 1
+): boolean {
+  const leftRounded = {
+    x: roundToDecimals(left.x, decimals),
+    y: roundToDecimals(left.y, decimals),
+    width: roundToDecimals(left.width, decimals),
+    height: roundToDecimals(left.height, decimals),
+  };
+  const rightRounded = {
+    x: roundToDecimals(right.x, decimals),
+    y: roundToDecimals(right.y, decimals),
+    width: roundToDecimals(right.width, decimals),
+    height: roundToDecimals(right.height, decimals),
+  };
+
+  return (
+    leftRounded.x === rightRounded.x &&
+    leftRounded.y === rightRounded.y &&
+    leftRounded.width === rightRounded.width &&
+    leftRounded.height === rightRounded.height
+  );
+}
+
+function nodeMatchesCandidate(
+  node: Record<string, unknown>,
+  candidate: Record<string, unknown>
+): boolean {
+  const nodeId = getNodeId(node);
+  const candidateId = getNodeId(candidate);
+  if (nodeId && candidateId) {
+    return nodeId === candidateId;
+  }
+
+  const nodeFrame = getNodeFrame(node);
+  const candidateFrame = getNodeFrame(candidate);
+  if (!nodeFrame || !candidateFrame) {
+    return false;
+  }
+
+  const nodeLabel = getNodeLabel(node);
+  const candidateLabel = getNodeLabel(candidate);
+  if (nodeLabel === "<unlabeled>" || candidateLabel === "<unlabeled>") {
+    return false;
+  }
+
+  if (nodeLabel !== candidateLabel) {
+    return false;
+  }
+
+  return framesMatch(nodeFrame, candidateFrame, 1);
+}
+
+function subtreeContainsNode(
+  root: Record<string, unknown>,
+  candidate: Record<string, unknown>
+): boolean {
+  if (nodeMatchesCandidate(root, candidate)) {
+    return true;
+  }
+
+  const children = root.children;
+  if (Array.isArray(children)) {
+    for (const child of children) {
+      if (isPlainObject(child) && subtreeContainsNode(child, candidate)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 // Register tools only if they're not filtered
 if (!isToolFiltered("get_booted_sim_id")) {
   server.tool(
@@ -732,6 +996,148 @@ if (!isToolFiltered("ui_tap")) {
   );
 }
 
+if (!isToolFiltered("search_and_tap")) {
+  server.tool(
+    "search_and_tap",
+    "Search accessibility labels and tap the only matching element",
+    {
+      term: z
+        .string()
+        .min(1)
+        .describe(
+          "Case-insensitive substring to match against accessibility labels and related fields"
+        ),
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      duration: z
+        .string()
+        .regex(/^\d+(\.\d+)?$/)
+        .optional()
+        .describe("Press duration"),
+    },
+    { title: "Search And Tap", readOnlyHint: false, openWorldHint: true },
+    async ({ term, udid, duration }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        const { stdout } = await idb(
+          "ui",
+          "describe-all",
+          "--udid",
+          actualUdid,
+          "--json",
+          "--nested"
+        );
+
+        const uiData = JSON.parse(stdout);
+        const matches = collectMatchingNodes(uiData, term);
+
+        if (matches.length === 0) {
+          throw new Error(`No matching elements found for "${term}".`);
+        }
+
+        if (matches.length > 1) {
+          const labels = matches
+            .slice(0, 5)
+            .map((node) => getNodeLabel(node))
+            .join(", ");
+          throw new Error(
+            labels.length > 0
+              ? `Multiple matching elements found for "${term}": ${labels}`
+              : `Multiple matching elements found for "${term}".`
+          );
+        }
+
+        const target = matches[0];
+        const center = getNodeFrameCenter(target);
+        if (!center) {
+          throw new Error(
+            `Matched element "${getNodeLabel(target)}" does not have a valid frame.`
+          );
+        }
+
+        const tapX = roundToDecimals(center.x, 1);
+        const tapY = roundToDecimals(center.y, 1);
+
+        const { stdout: pointStdout } = await idb(
+          "ui",
+          "describe-point",
+          "--udid",
+          actualUdid,
+          "--json",
+          "--",
+          String(tapX),
+          String(tapY)
+        );
+
+        const pointData = JSON.parse(pointStdout);
+        let pointNode: Record<string, unknown> | null = null;
+        if (Array.isArray(pointData) && pointData.length > 0) {
+          const first = pointData[0];
+          if (isPlainObject(first)) {
+            pointNode = first;
+          }
+        } else if (isPlainObject(pointData)) {
+          pointNode = pointData;
+        }
+
+        if (!pointNode) {
+          throw new Error(
+            `Could not determine element at (${tapX}, ${tapY}) to validate visibility.`
+          );
+        }
+
+        if (!subtreeContainsNode(target, pointNode)) {
+          throw new Error(
+            `Element "${getNodeLabel(
+              target
+            )}" is obstructed by "${getNodeLabel(pointNode)}" at (${tapX}, ${tapY}).`
+          );
+        }
+
+        const { stderr } = await idb(
+          "ui",
+          "tap",
+          "--udid",
+          actualUdid,
+          ...(duration ? ["--duration", duration] : []),
+          "--json",
+          "--",
+          String(tapX),
+          String(tapY)
+        );
+
+        if (stderr) throw new Error(stderr);
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: `Tapped "${getNodeLabel(target)}" at (${tapX}, ${tapY})`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error searching and tapping "${term}": ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
 if (!isToolFiltered("ui_type")) {
   server.tool(
     "ui_type",
@@ -779,6 +1185,124 @@ if (!isToolFiltered("ui_type")) {
               type: "text",
               text: errorWithTroubleshooting(
                 `Error typing text into the iOS Simulator: ${
+                  toError(error).message
+                }`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
+if (!isToolFiltered("ui_type_in_field")) {
+  server.tool(
+    "ui_type_in_field",
+    "Find a text input field by label/accessibility text, focus it, and type into it in the iOS Simulator",
+    {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      field_query: z
+        .string()
+        .min(1)
+        .max(200)
+        .describe(
+          "Case-insensitive substring used to find a text input by AXLabel, AXUniqueId, title, help, or AXValue"
+        ),
+      text: z
+        .string()
+        .max(500)
+        .regex(/^[\x20-\x7E]+$/)
+        .describe("Text to input"),
+    },
+    { title: "UI Type In Field", readOnlyHint: false, openWorldHint: true },
+    async ({ udid, field_query, text }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        const { stdout } = await idb(
+          "ui",
+          "describe-all",
+          "--udid",
+          actualUdid,
+          "--json",
+          "--nested"
+        );
+        const uiData = JSON.parse(stdout);
+
+        const textInputs = collectTextInputNodes(uiData);
+        const matches = textInputs.filter((node) =>
+          nodeMatchesSearch(node, field_query)
+        );
+
+        if (matches.length === 0) {
+          const availableFields = textInputs
+            .slice(0, 5)
+            .map((node) => getNodeLabel(node))
+            .join(", ");
+          throw new Error(
+            availableFields.length > 0
+              ? `No matching text field found for "${field_query}". Available text fields: ${availableFields}`
+              : `No text input fields found on screen for "${field_query}".`
+          );
+        }
+
+        const target = matches[0];
+        const center = getNodeFrameCenter(target);
+        if (!center) {
+          throw new Error(
+            `Matched text field "${getNodeLabel(target)}" does not have a valid frame.`
+          );
+        }
+
+        const tapX = roundToDecimals(center.x, 1);
+        const tapY = roundToDecimals(center.y, 1);
+
+        const { stderr: tapError } = await idb(
+          "ui",
+          "tap",
+          "--udid",
+          actualUdid,
+          "--json",
+          "--",
+          String(tapX),
+          String(tapY)
+        );
+        if (tapError) throw new Error(tapError);
+
+        const { stderr: typeError } = await idb(
+          "ui",
+          "text",
+          "--udid",
+          actualUdid,
+          "--",
+          text
+        );
+        if (typeError) throw new Error(typeError);
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: `Typed successfully into "${getNodeLabel(
+                target
+              )}" at (${tapX}, ${tapY})`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error typing into text field "${field_query}": ${
                   toError(error).message
                 }`
               ),
