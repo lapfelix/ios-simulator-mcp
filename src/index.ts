@@ -66,6 +66,39 @@ function getIdbPath(): string {
 }
 
 /**
+ * Gets the IDB companion path from environment variable, if set.
+ * This is passed as --companion-path to the idb CLI, allowing use of
+ * a custom idb_companion binary (e.g. a fork with additional features).
+ * @returns The path to the IDB companion executable, or undefined
+ * @throws Error if custom path is specified but doesn't exist
+ */
+function getCompanionPath(): string | undefined {
+  const customPath = process.env.IOS_SIMULATOR_MCP_COMPANION_PATH;
+
+  if (customPath) {
+    const expandedPath = customPath.startsWith("~/")
+      ? path.join(os.homedir(), customPath.slice(2))
+      : customPath;
+
+    if (!fs.existsSync(expandedPath)) {
+      throw new Error(
+        `Custom companion path specified in IOS_SIMULATOR_MCP_COMPANION_PATH does not exist: ${expandedPath}`
+      );
+    }
+
+    return expandedPath;
+  }
+
+  // Auto-detect bundled companion from `npm run setup-companion`
+  const bundledPath = path.join(__dirname, "..", ".companion", "bin", "idb_companion");
+  if (fs.existsSync(bundledPath)) {
+    return bundledPath;
+  }
+
+  return undefined;
+}
+
+/**
  * Runs the idb command with the given arguments
  * @param args - arguments to pass to the idb command
  * @returns The stdout and stderr of the command
@@ -73,7 +106,11 @@ function getIdbPath(): string {
  */
 async function idb(...args: string[]) {
   try {
-    return await run(getIdbPath(), args);
+    const companionPath = getCompanionPath();
+    const fullArgs = companionPath
+      ? ["--companion-path", companionPath, ...args]
+      : args;
+    return await run(getIdbPath(), fullArgs);
   } catch (error) {
     const err = error as NodeJS.ErrnoException;
     if (err && err.code === "ENOENT") {
@@ -972,6 +1009,10 @@ if (!isToolFiltered("ui_tap")) {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
+        const roundedX = Math.round(x);
+        const roundedY = Math.round(y);
+        const wasRounded = roundedX !== x || roundedY !== y;
+
         const { stderr } = await idb(
           "ui",
           "tap",
@@ -983,15 +1024,19 @@ if (!isToolFiltered("ui_tap")) {
           // to separate the command's options from positional arguments.
           // This prevents the shell from misinterpreting the arguments as options.
           "--",
-          String(x),
-          String(y)
+          String(roundedX),
+          String(roundedY)
         );
 
         if (stderr) throw new Error(stderr);
 
+        const message = wasRounded
+          ? `Tapped successfully at (${roundedX}, ${roundedY}). Warning: Decimals rounded to nearest integer.`
+          : "Tapped successfully";
+
         return {
           isError: false,
-          content: [{ type: "text", text: "Tapped successfully" }],
+          content: [{ type: "text", text: message }],
         };
       } catch (error) {
         return {
@@ -1047,10 +1092,27 @@ if (!isToolFiltered("search_and_tap")) {
         );
 
         const uiData = JSON.parse(stdout);
-        const matches = collectMatchingNodes(uiData, term);
+        let matches = collectMatchingNodes(uiData, term);
 
         if (matches.length === 0) {
           throw new Error(`No matching elements found for "${term}".`);
+        }
+
+        // When multiple substring matches exist, prefer exact matches
+        if (matches.length > 1) {
+          const lowered = term.toLowerCase();
+          const exactMatches = matches.filter((node) => {
+            for (const field of UI_SEARCH_FIELDS) {
+              const value = (node as Record<string, unknown>)[field];
+              if (typeof value === "string" && value.toLowerCase() === lowered) {
+                return true;
+              }
+            }
+            return false;
+          });
+          if (exactMatches.length === 1) {
+            matches = exactMatches;
+          }
         }
 
         if (matches.length > 1) {
@@ -1358,6 +1420,13 @@ if (!isToolFiltered("ui_swipe")) {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
+        const rXStart = Math.round(x_start);
+        const rYStart = Math.round(y_start);
+        const rXEnd = Math.round(x_end);
+        const rYEnd = Math.round(y_end);
+        const wasRounded =
+          rXStart !== x_start || rYStart !== y_start || rXEnd !== x_end || rYEnd !== y_end;
+
         const { stderr } = await idb(
           "ui",
           "swipe",
@@ -1370,17 +1439,21 @@ if (!isToolFiltered("ui_swipe")) {
           // to separate the command's options from positional arguments.
           // This prevents the shell from misinterpreting the arguments as options.
           "--",
-          String(x_start),
-          String(y_start),
-          String(x_end),
-          String(y_end)
+          String(rXStart),
+          String(rYStart),
+          String(rXEnd),
+          String(rYEnd)
         );
 
         if (stderr) throw new Error(stderr);
 
+        const message = wasRounded
+          ? `Swiped successfully. Warning: Decimals rounded to nearest integer.`
+          : "Swiped successfully";
+
         return {
           isError: false,
-          content: [{ type: "text", text: "Swiped successfully" }],
+          content: [{ type: "text", text: message }],
         };
       } catch (error) {
         return {
@@ -1417,6 +1490,9 @@ if (!isToolFiltered("ui_describe_point")) {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
+        const roundedX = Math.round(x);
+        const roundedY = Math.round(y);
+
         const { stdout, stderr } = await idb(
           "ui",
           "describe-point",
@@ -1427,8 +1503,8 @@ if (!isToolFiltered("ui_describe_point")) {
           // to separate the command's options from positional arguments.
           // This prevents the shell from misinterpreting the arguments as options.
           "--",
-          String(x),
-          String(y)
+          String(roundedX),
+          String(roundedY)
         );
 
         if (stderr) throw new Error(stderr);

@@ -491,6 +491,19 @@ Claude Code CLI can manage MCP servers using the `claude mcp` commands or by edi
 | `IOS_SIMULATOR_MCP_FILTERED_TOOLS`     | A comma-separated list of tool names to filter out from being registered.                                                                                                                            | `screenshot,record_video,stop_recording` |
 | `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR` | Specifies a default directory for output files like screenshots and video recordings. If not set, `~/Downloads` will be used. This can be handy if your agent has limited access to the file system. | `~/Code/awesome-project/tmp`             |
 | `IOS_SIMULATOR_MCP_IDB_PATH`           | Specifies a custom path to the IDB executable. If not set, `idb` will be used (assuming it's in your PATH). Useful if IDB is installed in a non-standard location.                                   | `~/bin/idb` or `/usr/local/bin/idb`      |
+| `IOS_SIMULATOR_MCP_COMPANION_PATH`    | Specifies a custom path to the `idb_companion` binary. When set, `--companion-path` is passed to the IDB CLI so it uses this companion instead of the default one. Useful for running a fork of `idb_companion` with additional features (e.g. improved WebView accessibility support). Also auto-detected if installed via `npm run setup-companion`. | `/usr/local/bin/idb_companion`           |
+
+### Enhanced idb_companion (Optional)
+
+An enhanced build of `idb_companion` is available with improved WebView accessibility support (better detection of web content inside WKWebView). To install it:
+
+```bash
+npm run setup-companion
+```
+
+This downloads a prebuilt `idb_companion` binary from [lapfelix/idb](https://github.com/lapfelix/idb/releases) into the project's `.companion/` directory. The MCP server will automatically detect and use it — no additional configuration needed.
+
+Alternatively, you can point to any custom `idb_companion` binary via the `IOS_SIMULATOR_MCP_COMPANION_PATH` environment variable.
 
 #### Configuration Example
 
@@ -503,7 +516,8 @@ Claude Code CLI can manage MCP servers using the `claude mcp` commands or by edi
       "env": {
         "IOS_SIMULATOR_MCP_FILTERED_TOOLS": "screenshot,record_video,stop_recording",
         "IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR": "~/Code/awesome-project/tmp",
-        "IOS_SIMULATOR_MCP_IDB_PATH": "~/bin/idb"
+        "IOS_SIMULATOR_MCP_IDB_PATH": "~/bin/idb",
+        "IOS_SIMULATOR_MCP_COMPANION_PATH": "/usr/local/bin/idb_companion"
       }
     }
   }

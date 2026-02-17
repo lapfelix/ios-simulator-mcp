@@ -11,6 +11,7 @@
   },
   "files": [
     "build",
+    "scripts",
     "package.json"
   ],
   "scripts": {
@@ -18,6 +19,7 @@
     "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
     "start": "node build/index.js",
     "watch": "tsc --watch",
+    "setup-companion": "bash scripts/setup-companion.sh",
     "predev": "npm run build",
     "dev": "npx @modelcontextprotocol/inspector node build/index.js"
   },
