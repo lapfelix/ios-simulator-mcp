@@ -137,6 +137,307 @@ function isToolFiltered(toolName: string): boolean {
   return FILTERED_TOOLS.includes(toolName);
 }
 
+/**
+ * Maps common parameter name guesses to their canonical names.
+ * When an LLM sends an alias instead of the canonical name, we silently
+ * resolve it and append a hint to the response.
+ */
+const PARAM_ALIASES: Record<string, string> = {
+  // term (ui_describe_search, search_and_tap)
+  query: "term",
+  search: "term",
+  searchTerm: "term",
+  search_term: "term",
+  searchQuery: "search_query",
+  search_query: "term",
+  keyword: "term",
+  label: "term",
+  filter: "term",
+  pattern: "term",
+  q: "term",
+  find: "term",
+  lookup: "term",
+  searchText: "term",
+  search_text: "term",
+  searchString: "term",
+  search_string: "term",
+
+  // x / y (ui_tap, ui_describe_point)
+  posX: "x",
+  pos_x: "x",
+  coordX: "x",
+  coord_x: "x",
+  tapX: "x",
+  tap_x: "x",
+  pointX: "x",
+  point_x: "x",
+  xCoord: "x",
+  x_coord: "x",
+  xPos: "x",
+  x_pos: "x",
+  locationX: "x",
+  location_x: "x",
+  screenX: "x",
+  screen_x: "x",
+  posY: "y",
+  pos_y: "y",
+  coordY: "y",
+  coord_y: "y",
+  tapY: "y",
+  tap_y: "y",
+  pointY: "y",
+  point_y: "y",
+  yCoord: "y",
+  y_coord: "y",
+  yPos: "y",
+  y_pos: "y",
+  locationY: "y",
+  location_y: "y",
+  screenY: "y",
+  screen_y: "y",
+
+  // x_start / y_start / x_end / y_end (ui_swipe)
+  startX: "x_start",
+  start_x: "x_start",
+  fromX: "x_start",
+  from_x: "x_start",
+  xStart: "x_start",
+  x_from: "x_start",
+  xFrom: "x_start",
+  x1: "x_start",
+  originX: "x_start",
+  origin_x: "x_start",
+  sourceX: "x_start",
+  source_x: "x_start",
+  startY: "y_start",
+  start_y: "y_start",
+  fromY: "y_start",
+  from_y: "y_start",
+  yStart: "y_start",
+  y_from: "y_start",
+  yFrom: "y_start",
+  y1: "y_start",
+  originY: "y_start",
+  origin_y: "y_start",
+  sourceY: "y_start",
+  source_y: "y_start",
+  endX: "x_end",
+  end_x: "x_end",
+  toX: "x_end",
+  to_x: "x_end",
+  xEnd: "x_end",
+  x_to: "x_end",
+  xTo: "x_end",
+  x2: "x_end",
+  destinationX: "x_end",
+  destination_x: "x_end",
+  targetX: "x_end",
+  target_x: "x_end",
+  endY: "y_end",
+  end_y: "y_end",
+  toY: "y_end",
+  to_y: "y_end",
+  yEnd: "y_end",
+  y_to: "y_end",
+  yTo: "y_end",
+  y2: "y_end",
+  destinationY: "y_end",
+  destination_y: "y_end",
+  targetY: "y_end",
+  target_y: "y_end",
+
+  // delta (ui_swipe)
+  step: "delta",
+  stepSize: "delta",
+  step_size: "delta",
+  increment: "delta",
+
+  // duration
+  press_duration: "duration",
+  pressDuration: "duration",
+  hold_duration: "duration",
+  holdDuration: "duration",
+  tap_duration: "duration",
+  tapDuration: "duration",
+  swipe_duration: "duration",
+  swipeDuration: "duration",
+  hold_time: "duration",
+  holdTime: "duration",
+
+  // text (ui_type, ui_type_in_field)
+  input: "text",
+  inputText: "text",
+  input_text: "text",
+  value: "text",
+  content: "text",
+  message: "text",
+  characters: "text",
+  keys: "text",
+  typeText: "text",
+  type_text: "text",
+  textToType: "text",
+  text_to_type: "text",
+  keystrokes: "text",
+  textInput: "text",
+  text_input: "text",
+
+  // field_query (ui_type_in_field)
+  field: "field_query",
+  fieldQuery: "field_query",
+  fieldName: "field_query",
+  field_name: "field_query",
+  fieldLabel: "field_query",
+  field_label: "field_query",
+  placeholder: "field_query",
+  inputField: "field_query",
+  input_field: "field_query",
+  textField: "field_query",
+  text_field: "field_query",
+  fieldText: "field_query",
+  field_text: "field_query",
+  selector: "field_query",
+  fieldId: "field_query",
+  field_id: "field_query",
+
+  // output_path (screenshot, record_video)
+  path: "output_path",
+  outputPath: "output_path",
+  filePath: "output_path",
+  file_path: "output_path",
+  filename: "output_path",
+  file_name: "output_path",
+  fileName: "output_path",
+  savePath: "output_path",
+  save_path: "output_path",
+  destination: "output_path",
+  dest: "output_path",
+  output: "output_path",
+  outputFile: "output_path",
+  output_file: "output_path",
+  save_to: "output_path",
+  saveTo: "output_path",
+  file: "output_path",
+
+  // type/format (screenshot)
+  format: "type",
+  imageFormat: "type",
+  image_format: "type",
+  image_type: "type",
+  imageType: "type",
+  ext: "type",
+  extension: "type",
+  fileType: "type",
+  file_type: "type",
+  outputFormat: "type",
+  output_format: "type",
+
+  // codec (record_video)
+  videoCodec: "codec",
+  video_codec: "codec",
+  encoder: "codec",
+  encoding: "codec",
+  videoFormat: "codec",
+  video_format: "codec",
+
+  // force (record_video)
+  overwrite: "force",
+
+  // app_path (install_app)
+  appPath: "app_path",
+  bundlePath: "app_path",
+  bundle_path: "app_path",
+  appFile: "app_path",
+  app_file: "app_path",
+  ipaPath: "app_path",
+  ipa_path: "app_path",
+  appBundle: "app_path",
+  app_bundle: "app_path",
+  binaryPath: "app_path",
+  binary_path: "app_path",
+  app: "app_path",
+
+  // bundle_id (launch_app)
+  bundleId: "bundle_id",
+  bundleIdentifier: "bundle_id",
+  bundle_identifier: "bundle_id",
+  appId: "bundle_id",
+  app_id: "bundle_id",
+  appIdentifier: "bundle_id",
+  app_identifier: "bundle_id",
+  identifier: "bundle_id",
+  id: "bundle_id",
+  packageName: "bundle_id",
+  package_name: "bundle_id",
+  appName: "bundle_id",
+  app_name: "bundle_id",
+
+  // terminate_running (launch_app)
+  terminateRunning: "terminate_running",
+  restart: "terminate_running",
+  relaunch: "terminate_running",
+  kill: "terminate_running",
+  killFirst: "terminate_running",
+  kill_first: "terminate_running",
+  terminate: "terminate_running",
+  fresh: "terminate_running",
+  freshLaunch: "terminate_running",
+  fresh_launch: "terminate_running",
+
+  // compression (ui_describe_search, ui_describe_all)
+  compressionMode: "compression",
+  compression_mode: "compression",
+  displayMode: "compression",
+  display_mode: "compression",
+  mode: "compression",
+};
+
+/**
+ * Extends a Zod schema shape by adding alias fields.
+ * For each canonical param in the shape that has aliases in PARAM_ALIASES,
+ * adds those aliases as optional fields with z.any() so they pass validation.
+ */
+function withAliases<T extends Record<string, z.ZodTypeAny>>(shape: T): T & Record<string, z.ZodTypeAny> {
+  const extended: Record<string, z.ZodTypeAny> = { ...shape };
+  const canonicalKeys = new Set(Object.keys(shape));
+
+  for (const [alias, canonical] of Object.entries(PARAM_ALIASES)) {
+    if (canonicalKeys.has(canonical) && !canonicalKeys.has(alias)) {
+      extended[alias] = z.any().optional().describe(`Alias for '${canonical}'`);
+    }
+  }
+  return extended as T & Record<string, z.ZodTypeAny>;
+}
+
+/**
+ * Resolves aliased parameter names to their canonical names.
+ * Returns the resolved args and a list of aliases that were used.
+ */
+function resolveAliases(args: Record<string, unknown>): {
+  resolved: Record<string, unknown>;
+  aliasHint: string;
+} {
+  const resolved: Record<string, unknown> = { ...args };
+  const used: string[] = [];
+
+  for (const [alias, canonical] of Object.entries(PARAM_ALIASES)) {
+    if (alias in resolved && resolved[alias] != null) {
+      // Only use alias if canonical is not already provided
+      if (!(canonical in resolved) || resolved[canonical] == null) {
+        resolved[canonical] = resolved[alias];
+        used.push(`'${alias}' → '${canonical}'`);
+      }
+      delete resolved[alias];
+    }
+  }
+
+  const aliasHint =
+    used.length > 0
+      ? `\nFYI: Resolved param aliases: ${used.join(", ")}. Prefer the canonical names next time.`
+      : "";
+
+  return { resolved, aliasHint };
+}
+
 const server = new McpServer({
   name: "ios-simulator",
   version: require("../package.json").version,
@@ -856,7 +1157,7 @@ if (!isToolFiltered("ui_describe_all")) {
   server.tool(
     "ui_describe_all",
     "Describes accessibility information for the entire screen in the iOS Simulator",
-    {
+    withAliases({
       udid: z
         .string()
         .regex(UDID_REGEX)
@@ -868,11 +1169,12 @@ if (!isToolFiltered("ui_describe_all")) {
         .describe(
           "Compression mode for the returned tree. raw, compact, compact_full_precision, table, or table_dedup. Default: compact."
         ),
-    },
+    }),
     { title: "Describe All UI Elements", readOnlyHint: true, openWorldHint: true },
-    async ({ udid, compression }) => {
+    async (rawArgs) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
+        const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
+        const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
 
         const { stdout } = await idb(
           "ui",
@@ -883,11 +1185,11 @@ if (!isToolFiltered("ui_describe_all")) {
           "--nested"
         );
 
-        const mode = compression ?? DEFAULT_UI_COMPRESSION_MODE;
+        const mode = (args.compression as UiCompressionMode | undefined) ?? DEFAULT_UI_COMPRESSION_MODE;
         if (mode === "raw") {
           return {
             isError: false,
-            content: [{ type: "text", text: stdout }],
+            content: [{ type: "text", text: stdout + aliasHint }],
           };
         }
 
@@ -896,7 +1198,7 @@ if (!isToolFiltered("ui_describe_all")) {
 
         return {
           isError: false,
-          content: [{ type: "text", text: JSON.stringify(compressed) }],
+          content: [{ type: "text", text: JSON.stringify(compressed) + aliasHint }],
         };
       } catch (error) {
         return {
@@ -919,19 +1221,13 @@ if (!isToolFiltered("ui_describe_search")) {
   server.tool(
     "ui_describe_search",
     "Describes accessibility info for elements whose labels match 'term', returning only matching elements and their parents",
-    {
+    withAliases({
       term: z
         .string()
         .min(1)
-        .optional()
         .describe(
           "Case-insensitive substring to match against accessibility labels and related fields"
         ),
-      query: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("Alias for 'term' — prefer using 'term' instead"),
       udid: z
         .string()
         .regex(UDID_REGEX)
@@ -943,12 +1239,12 @@ if (!isToolFiltered("ui_describe_search")) {
         .describe(
           "Compression mode for the returned tree. raw, compact, compact_full_precision, table, or table_dedup. Default: compact."
         ),
-    },
+    }),
     { title: "Search UI Elements", readOnlyHint: true, openWorldHint: true },
-    async ({ term: termArg, query, udid, compression }) => {
+    async (rawArgs) => {
       try {
-        const usedAlias = !termArg && !!query;
-        const term = termArg ?? query;
+        const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
+        const term = args.term as string | undefined;
         if (!term) {
           return {
             isError: true,
@@ -961,7 +1257,7 @@ if (!isToolFiltered("ui_describe_search")) {
           };
         }
 
-        const actualUdid = await getBootedDeviceId(udid);
+        const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
 
         const { stdout } = await idb(
           "ui",
@@ -974,36 +1270,20 @@ if (!isToolFiltered("ui_describe_search")) {
 
         const uiData = JSON.parse(stdout);
         const filtered = filterUiTree(uiData, term);
-        const mode = compression ?? DEFAULT_UI_COMPRESSION_MODE;
+        const mode = (args.compression as UiCompressionMode | undefined) ?? DEFAULT_UI_COMPRESSION_MODE;
 
         if (mode === "raw") {
-          const result = JSON.stringify(filtered);
           return {
             isError: false,
-            content: [
-              {
-                type: "text",
-                text: usedAlias
-                  ? `${result}\nFYI: The parameter is called "term", not "query".`
-                  : result,
-              },
-            ],
+            content: [{ type: "text", text: JSON.stringify(filtered) + aliasHint }],
           };
         }
 
         const compressed = compressUiTree(filtered, mode);
-        const result = JSON.stringify(compressed);
 
         return {
           isError: false,
-          content: [
-            {
-              type: "text",
-              text: usedAlias
-                ? `${result}\nFYI: The parameter is called "term", not "query".`
-                : result,
-            },
-          ],
+          content: [{ type: "text", text: JSON.stringify(compressed) + aliasHint }],
         };
       } catch (error) {
         return {
@@ -1026,7 +1306,7 @@ if (!isToolFiltered("ui_tap")) {
   server.tool(
     "ui_tap",
     "Tap at (x, y) coordinates on the iOS Simulator screen",
-    {
+    withAliases({
       duration: z
         .string()
         .regex(/^\d+(\.\d+)?$/)
@@ -1039,11 +1319,15 @@ if (!isToolFiltered("ui_tap")) {
         .describe("Udid of target, can also be set with the IDB_UDID env var"),
       x: z.coerce.number().describe("The x-coordinate"),
       y: z.coerce.number().describe("The y-coordinate"),
-    },
+    }),
     { title: "UI Tap", readOnlyHint: false, openWorldHint: true },
-    async ({ duration, udid, x, y }) => {
+    async (rawArgs) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
+        const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
+        const x = args.x as number;
+        const y = args.y as number;
+        const duration = args.duration as string | undefined;
+        const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
 
         const roundedX = Math.round(x);
         const roundedY = Math.round(y);
@@ -1066,13 +1350,13 @@ if (!isToolFiltered("ui_tap")) {
 
         if (stderr) throw new Error(stderr);
 
-        const message = (wasRounded
+        const message = wasRounded
           ? `Tapped successfully at (${roundedX}, ${roundedY}). Warning: Decimals rounded to nearest integer.`
-          : "Tapped successfully") + "\nFYI: Quotes around coordinate values aren't necessary — plain numbers work fine.";
+          : "Tapped successfully";
 
         return {
           isError: false,
-          content: [{ type: "text", text: message }],
+          content: [{ type: "text", text: message + aliasHint }],
         };
       } catch (error) {
         return {
@@ -1095,19 +1379,13 @@ if (!isToolFiltered("search_and_tap")) {
   server.tool(
     "search_and_tap",
     "Search accessibility labels by 'term' and tap the only matching element",
-    {
+    withAliases({
       term: z
         .string()
         .min(1)
-        .optional()
         .describe(
           "Case-insensitive substring to match against accessibility labels and related fields"
         ),
-      query: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("Alias for 'term' — prefer using 'term' instead"),
       udid: z
         .string()
         .regex(UDID_REGEX)
@@ -1118,12 +1396,13 @@ if (!isToolFiltered("search_and_tap")) {
         .regex(/^\d+(\.\d+)?$/)
         .optional()
         .describe("Press duration"),
-    },
+    }),
     { title: "Search And Tap", readOnlyHint: false, openWorldHint: true },
-    async ({ term: termArg, query, udid, duration }) => {
+    async (rawArgs) => {
       try {
-        const usedAlias = !termArg && !!query;
-        const term = termArg ?? query;
+        const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
+        const term = args.term as string | undefined;
+        const duration = args.duration as string | undefined;
         if (!term) {
           return {
             isError: true,
@@ -1136,7 +1415,7 @@ if (!isToolFiltered("search_and_tap")) {
           };
         }
 
-        const actualUdid = await getBootedDeviceId(udid);
+        const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
 
         const { stdout } = await idb(
           "ui",
@@ -1244,15 +1523,12 @@ if (!isToolFiltered("search_and_tap")) {
 
         if (stderr) throw new Error(stderr);
 
-        const tapMsg = `Tapped "${getNodeLabel(target)}" at (${tapX}, ${tapY})`;
         return {
           isError: false,
           content: [
             {
               type: "text",
-              text: usedAlias
-                ? `${tapMsg}\nFYI: The parameter is called "term", not "query".`
-                : tapMsg,
+              text: `Tapped "${getNodeLabel(target)}" at (${tapX}, ${tapY})` + aliasHint,
             },
           ],
         };
@@ -1263,7 +1539,7 @@ if (!isToolFiltered("search_and_tap")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error searching and tapping "${termArg ?? query ?? ""}": ${toError(error).message}`
+                `Error searching and tapping "${(rawArgs as Record<string, unknown>).term ?? (rawArgs as Record<string, unknown>).query ?? ""}": ${toError(error).message}`
               ),
             },
           ],
@@ -1276,8 +1552,8 @@ if (!isToolFiltered("search_and_tap")) {
 if (!isToolFiltered("ui_type")) {
   server.tool(
     "ui_type",
-    "Input text into the iOS Simulator",
-    {
+    "Input 'text' into the iOS Simulator",
+    withAliases({
       udid: z
         .string()
         .regex(UDID_REGEX)
@@ -1288,11 +1564,13 @@ if (!isToolFiltered("ui_type")) {
         .max(500)
         .regex(/^[\x20-\x7E]+$/)
         .describe("Text to input"),
-    },
+    }),
     { title: "UI Type", readOnlyHint: false, openWorldHint: true },
-    async ({ udid, text }) => {
+    async (rawArgs) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
+        const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
+        const text = args.text as string;
+        const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
 
         const { stderr } = await idb(
           "ui",
@@ -1310,7 +1588,7 @@ if (!isToolFiltered("ui_type")) {
 
         return {
           isError: false,
-          content: [{ type: "text", text: "Typed successfully" }],
+          content: [{ type: "text", text: "Typed successfully" + aliasHint }],
         };
       } catch (error) {
         return {
@@ -1334,8 +1612,8 @@ if (!isToolFiltered("ui_type")) {
 if (!isToolFiltered("ui_type_in_field")) {
   server.tool(
     "ui_type_in_field",
-    "Find a text input field by label/accessibility text, focus it, and type into it in the iOS Simulator",
-    {
+    "Find a text input field by 'field_query' label, focus it, and type 'text' into it",
+    withAliases({
       udid: z
         .string()
         .regex(UDID_REGEX)
@@ -1353,11 +1631,14 @@ if (!isToolFiltered("ui_type_in_field")) {
         .max(500)
         .regex(/^[\x20-\x7E]+$/)
         .describe("Text to input"),
-    },
+    }),
     { title: "UI Type In Field", readOnlyHint: false, openWorldHint: true },
-    async ({ udid, field_query, text }) => {
+    async (rawArgs) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
+        const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
+        const field_query = args.field_query as string;
+        const text = args.text as string;
+        const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
 
         const { stdout } = await idb(
           "ui",
@@ -1426,7 +1707,7 @@ if (!isToolFiltered("ui_type_in_field")) {
               type: "text",
               text: `Typed successfully into "${getNodeLabel(
                 target
-              )}" at (${tapX}, ${tapY})`,
+              )}" at (${tapX}, ${tapY})` + aliasHint,
             },
           ],
         };
@@ -1437,9 +1718,7 @@ if (!isToolFiltered("ui_type_in_field")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error typing into text field "${field_query}": ${
-                  toError(error).message
-                }`
+                `Error typing into text field: ${toError(error).message}`
               ),
             },
           ],
@@ -1452,8 +1731,8 @@ if (!isToolFiltered("ui_type_in_field")) {
 if (!isToolFiltered("ui_swipe")) {
   server.tool(
     "ui_swipe",
-    "Swipe on the screen in the iOS Simulator. Use x_start, y_start, x_end, y_end for coordinates.",
-    {
+    "Swipe from (x_start, y_start) to (x_end, y_end) on the iOS Simulator screen",
+    withAliases({
       duration: z
         .string()
         .regex(/^\d+(\.\d+)?$/)
@@ -1464,49 +1743,34 @@ if (!isToolFiltered("ui_swipe")) {
         .regex(UDID_REGEX)
         .optional()
         .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      x_start: z.coerce.number().optional().describe("The starting x-coordinate"),
-      y_start: z.coerce.number().optional().describe("The starting y-coordinate"),
-      x_end: z.coerce.number().optional().describe("The ending x-coordinate"),
-      y_end: z.coerce.number().optional().describe("The ending y-coordinate"),
-      startX: z.coerce.number().optional().describe("Alias for x_start"),
-      startY: z.coerce.number().optional().describe("Alias for y_start"),
-      endX: z.coerce.number().optional().describe("Alias for x_end"),
-      endY: z.coerce.number().optional().describe("Alias for y_end"),
+      x_start: z.coerce.number().describe("The starting x-coordinate"),
+      y_start: z.coerce.number().describe("The starting y-coordinate"),
+      x_end: z.coerce.number().describe("The ending x-coordinate"),
+      y_end: z.coerce.number().describe("The ending y-coordinate"),
       delta: z
         .coerce.number()
         .optional()
         .describe("The size of each step in the swipe (default is 1)")
         .default(1),
-    },
+    }),
     { title: "UI Swipe", readOnlyHint: false, openWorldHint: true },
-    async ({ duration, udid, x_start, y_start, x_end, y_end, startX, startY, endX, endY, delta }) => {
+    async (rawArgs) => {
       try {
-        const resolvedXStart = x_start ?? startX;
-        const resolvedYStart = y_start ?? startY;
-        const resolvedXEnd = x_end ?? endX;
-        const resolvedYEnd = y_end ?? endY;
-        const usedAlias = (!x_start && !!startX) || (!y_start && !!startY) || (!x_end && !!endX) || (!y_end && !!endY);
+        const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
+        const x_start = args.x_start as number;
+        const y_start = args.y_start as number;
+        const x_end = args.x_end as number;
+        const y_end = args.y_end as number;
+        const duration = args.duration as string | undefined;
+        const delta = args.delta as number | undefined;
+        const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
 
-        if (resolvedXStart == null || resolvedYStart == null || resolvedXEnd == null || resolvedYEnd == null) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: "text",
-                text: 'Missing required coordinates. Provide x_start, y_start, x_end, and y_end.',
-              },
-            ],
-          };
-        }
-
-        const actualUdid = await getBootedDeviceId(udid);
-
-        const rXStart = Math.round(resolvedXStart);
-        const rYStart = Math.round(resolvedYStart);
-        const rXEnd = Math.round(resolvedXEnd);
-        const rYEnd = Math.round(resolvedYEnd);
+        const rXStart = Math.round(x_start);
+        const rYStart = Math.round(y_start);
+        const rXEnd = Math.round(x_end);
+        const rYEnd = Math.round(y_end);
         const wasRounded =
-          rXStart !== resolvedXStart || rYStart !== resolvedYStart || rXEnd !== resolvedXEnd || rYEnd !== resolvedYEnd;
+          rXStart !== x_start || rYStart !== y_start || rXEnd !== x_end || rYEnd !== y_end;
 
         const { stderr } = await idb(
           "ui",
@@ -1528,16 +1792,13 @@ if (!isToolFiltered("ui_swipe")) {
 
         if (stderr) throw new Error(stderr);
 
-        let message = wasRounded
+        const message = wasRounded
           ? `Swiped successfully. Warning: Decimals rounded to nearest integer.`
           : "Swiped successfully";
-        if (usedAlias) {
-          message += '\nFYI: The parameter names are x_start, y_start, x_end, y_end (not startX/endX style).';
-        }
 
         return {
           isError: false,
-          content: [{ type: "text", text: message }],
+          content: [{ type: "text", text: message + aliasHint }],
         };
       } catch (error) {
         return {
@@ -1560,7 +1821,7 @@ if (!isToolFiltered("ui_describe_point")) {
   server.tool(
     "ui_describe_point",
     "Returns the accessibility element at (x, y) coordinates on the iOS Simulator's screen",
-    {
+    withAliases({
       udid: z
         .string()
         .regex(UDID_REGEX)
@@ -1568,11 +1829,14 @@ if (!isToolFiltered("ui_describe_point")) {
         .describe("Udid of target, can also be set with the IDB_UDID env var"),
       x: z.coerce.number().describe("The x-coordinate"),
       y: z.coerce.number().describe("The y-coordinate"),
-    },
+    }),
     { title: "Describe UI Point", readOnlyHint: true, openWorldHint: true },
-    async ({ udid, x, y }) => {
+    async (rawArgs) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
+        const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
+        const x = args.x as number;
+        const y = args.y as number;
+        const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
 
         const roundedX = Math.round(x);
         const roundedY = Math.round(y);
@@ -1595,7 +1859,7 @@ if (!isToolFiltered("ui_describe_point")) {
 
         return {
           isError: false,
-          content: [{ type: "text", text: stdout }],
+          content: [{ type: "text", text: stdout + aliasHint }],
         };
       } catch (error) {
         return {
@@ -1604,7 +1868,7 @@ if (!isToolFiltered("ui_describe_point")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error describing point (${x}, ${y}): ${toError(error).message}`
+                `Error describing point: ${toError(error).message}`
               ),
             },
           ],
@@ -1749,8 +2013,8 @@ function ensureAbsolutePath(filePath: string): string {
 if (!isToolFiltered("screenshot")) {
   server.tool(
     "screenshot",
-    "Takes a screenshot of the iOS Simulator",
-    {
+    "Takes a screenshot of the iOS Simulator, saved to 'output_path'",
+    withAliases({
       udid: z
         .string()
         .regex(UDID_REGEX)
@@ -1780,11 +2044,16 @@ if (!isToolFiltered("screenshot")) {
         .describe(
           "For non-rectangular displays, handle the mask by policy (ignored, alpha, or black)"
         ),
-    },
+    }),
     { title: "Take Screenshot", readOnlyHint: false, openWorldHint: true },
-    async ({ udid, output_path, type, display, mask }) => {
+    async (rawArgs) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
+        const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
+        const output_path = args.output_path as string;
+        const type = args.type as "png" | "tiff" | "bmp" | "gif" | "jpeg" | undefined;
+        const display = args.display as "internal" | "external" | undefined;
+        const mask = args.mask as "ignored" | "alpha" | "black" | undefined;
+        const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
         const absolutePath = ensureAbsolutePath(output_path);
 
         // command is weird, it responds with stderr on success and stdout is blank
@@ -1813,7 +2082,7 @@ if (!isToolFiltered("screenshot")) {
           content: [
             {
               type: "text",
-              text: stdout,
+              text: stdout + aliasHint,
             },
           ],
         };
@@ -1837,8 +2106,8 @@ if (!isToolFiltered("screenshot")) {
 if (!isToolFiltered("record_video")) {
   server.tool(
     "record_video",
-    "Records a video of the iOS Simulator using simctl directly",
-    {
+    "Records a video of the iOS Simulator, optionally saved to 'output_path'",
+    withAliases({
       output_path: z
         .string()
         .max(1024)
@@ -1870,10 +2139,17 @@ if (!isToolFiltered("record_video")) {
         .describe(
           "Force the output file to be written to, even if the file already exists."
         ),
-    },
+    }),
     { title: "Record Video", readOnlyHint: false, openWorldHint: true },
-    async ({ output_path, codec, display, mask, force }) => {
+    async (rawArgs) => {
       try {
+        const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
+        const output_path = args.output_path as string | undefined;
+        const codec = args.codec as "h264" | "hevc" | undefined;
+        const display = args.display as "internal" | "external" | undefined;
+        const mask = args.mask as "ignored" | "alpha" | "black" | undefined;
+        const force = args.force as boolean | undefined;
+
         const defaultFileName = `simulator_recording_${Date.now()}.mp4`;
         const outputFile = ensureAbsolutePath(output_path ?? defaultFileName);
 
@@ -1922,7 +2198,7 @@ if (!isToolFiltered("record_video")) {
           content: [
             {
               type: "text",
-              text: `Recording started. The video will be saved to: ${outputFile}\nTo stop recording, use the stop_recording command.`,
+              text: `Recording started. The video will be saved to: ${outputFile}\nTo stop recording, use the stop_recording command.` + aliasHint,
             },
           ],
         };
@@ -1985,8 +2261,8 @@ if (!isToolFiltered("stop_recording")) {
 if (!isToolFiltered("install_app")) {
   server.tool(
     "install_app",
-    "Installs an app bundle (.app or .ipa) on the iOS Simulator",
-    {
+    "Installs an app bundle at 'app_path' (.app or .ipa) on the iOS Simulator",
+    withAliases({
       udid: z
         .string()
         .regex(UDID_REGEX)
@@ -1998,11 +2274,13 @@ if (!isToolFiltered("install_app")) {
         .describe(
           "Path to the app bundle (.app directory or .ipa file) to install"
         ),
-    },
+    }),
     { title: "Install App", readOnlyHint: false, openWorldHint: true },
-    async ({ udid, app_path }) => {
+    async (rawArgs) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
+        const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
+        const app_path = args.app_path as string;
+        const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
         const absolutePath = path.isAbsolute(app_path)
           ? app_path
           : path.resolve(app_path);
@@ -2020,7 +2298,7 @@ if (!isToolFiltered("install_app")) {
           content: [
             {
               type: "text",
-              text: `App installed successfully from: ${absolutePath}`,
+              text: `App installed successfully from: ${absolutePath}` + aliasHint,
             },
           ],
         };
@@ -2044,8 +2322,8 @@ if (!isToolFiltered("install_app")) {
 if (!isToolFiltered("launch_app")) {
   server.tool(
     "launch_app",
-    "Launches an app on the iOS Simulator by bundle identifier",
-    {
+    "Launches an app on the iOS Simulator by 'bundle_id' (e.g., com.apple.mobilesafari)",
+    withAliases({
       udid: z
         .string()
         .regex(UDID_REGEX)
@@ -2063,11 +2341,14 @@ if (!isToolFiltered("launch_app")) {
         .describe(
           "Terminate the app if it is already running before launching"
         ),
-    },
+    }),
     { title: "Launch App", readOnlyHint: false, openWorldHint: true },
-    async ({ udid, bundle_id, terminate_running }) => {
+    async (rawArgs) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
+        const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
+        const bundle_id = args.bundle_id as string;
+        const terminate_running = args.terminate_running as boolean | undefined;
+        const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
 
         // run() will throw if the command fails (non-zero exit code)
         const { stdout } = await run("xcrun", [
@@ -2088,9 +2369,9 @@ if (!isToolFiltered("launch_app")) {
           content: [
             {
               type: "text",
-              text: pid
+              text: (pid
                 ? `App ${bundle_id} launched successfully with PID: ${pid}`
-                : `App ${bundle_id} launched successfully`,
+                : `App ${bundle_id} launched successfully`) + aliasHint,
             },
           ],
         };
