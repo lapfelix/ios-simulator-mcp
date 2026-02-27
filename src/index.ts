@@ -923,9 +923,15 @@ if (!isToolFiltered("ui_describe_search")) {
       term: z
         .string()
         .min(1)
+        .optional()
         .describe(
           "Case-insensitive substring to match against accessibility labels and related fields"
         ),
+      query: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Alias for 'term' — prefer using 'term' instead"),
       udid: z
         .string()
         .regex(UDID_REGEX)
@@ -939,8 +945,22 @@ if (!isToolFiltered("ui_describe_search")) {
         ),
     },
     { title: "Search UI Elements", readOnlyHint: true, openWorldHint: true },
-    async ({ term, udid, compression }) => {
+    async ({ term: termArg, query, udid, compression }) => {
       try {
+        const usedAlias = !termArg && !!query;
+        const term = termArg ?? query;
+        if (!term) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: 'Missing required parameter "term": a search string to match against accessibility labels.',
+              },
+            ],
+          };
+        }
+
         const actualUdid = await getBootedDeviceId(udid);
 
         const { stdout } = await idb(
@@ -957,17 +977,33 @@ if (!isToolFiltered("ui_describe_search")) {
         const mode = compression ?? DEFAULT_UI_COMPRESSION_MODE;
 
         if (mode === "raw") {
+          const result = JSON.stringify(filtered);
           return {
             isError: false,
-            content: [{ type: "text", text: JSON.stringify(filtered) }],
+            content: [
+              {
+                type: "text",
+                text: usedAlias
+                  ? `${result}\nFYI: The parameter is called "term", not "query".`
+                  : result,
+              },
+            ],
           };
         }
 
         const compressed = compressUiTree(filtered, mode);
+        const result = JSON.stringify(compressed);
 
         return {
           isError: false,
-          content: [{ type: "text", text: JSON.stringify(compressed) }],
+          content: [
+            {
+              type: "text",
+              text: usedAlias
+                ? `${result}\nFYI: The parameter is called "term", not "query".`
+                : result,
+            },
+          ],
         };
       } catch (error) {
         return {
@@ -1001,8 +1037,8 @@ if (!isToolFiltered("ui_tap")) {
         .regex(UDID_REGEX)
         .optional()
         .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      x: z.number().describe("The x-coordinate"),
-      y: z.number().describe("The x-coordinate"),
+      x: z.coerce.number().describe("The x-coordinate"),
+      y: z.coerce.number().describe("The y-coordinate"),
     },
     { title: "UI Tap", readOnlyHint: false, openWorldHint: true },
     async ({ duration, udid, x, y }) => {
@@ -1030,9 +1066,9 @@ if (!isToolFiltered("ui_tap")) {
 
         if (stderr) throw new Error(stderr);
 
-        const message = wasRounded
+        const message = (wasRounded
           ? `Tapped successfully at (${roundedX}, ${roundedY}). Warning: Decimals rounded to nearest integer.`
-          : "Tapped successfully";
+          : "Tapped successfully") + "\nFYI: Quotes around coordinate values aren't necessary — plain numbers work fine.";
 
         return {
           isError: false,
@@ -1063,9 +1099,15 @@ if (!isToolFiltered("search_and_tap")) {
       term: z
         .string()
         .min(1)
+        .optional()
         .describe(
           "Case-insensitive substring to match against accessibility labels and related fields"
         ),
+      query: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Alias for 'term' — prefer using 'term' instead"),
       udid: z
         .string()
         .regex(UDID_REGEX)
@@ -1078,8 +1120,22 @@ if (!isToolFiltered("search_and_tap")) {
         .describe("Press duration"),
     },
     { title: "Search And Tap", readOnlyHint: false, openWorldHint: true },
-    async ({ term, udid, duration }) => {
+    async ({ term: termArg, query, udid, duration }) => {
       try {
+        const usedAlias = !termArg && !!query;
+        const term = termArg ?? query;
+        if (!term) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: 'Missing required parameter "term": a search string to match against accessibility labels.',
+              },
+            ],
+          };
+        }
+
         const actualUdid = await getBootedDeviceId(udid);
 
         const { stdout } = await idb(
@@ -1135,8 +1191,8 @@ if (!isToolFiltered("search_and_tap")) {
           );
         }
 
-        const tapX = roundToDecimals(center.x, 1);
-        const tapY = roundToDecimals(center.y, 1);
+        const tapX = Math.round(center.x);
+        const tapY = Math.round(center.y);
 
         const { stdout: pointStdout } = await idb(
           "ui",
@@ -1188,12 +1244,15 @@ if (!isToolFiltered("search_and_tap")) {
 
         if (stderr) throw new Error(stderr);
 
+        const tapMsg = `Tapped "${getNodeLabel(target)}" at (${tapX}, ${tapY})`;
         return {
           isError: false,
           content: [
             {
               type: "text",
-              text: `Tapped "${getNodeLabel(target)}" at (${tapX}, ${tapY})`,
+              text: usedAlias
+                ? `${tapMsg}\nFYI: The parameter is called "term", not "query".`
+                : tapMsg,
             },
           ],
         };
@@ -1204,7 +1263,7 @@ if (!isToolFiltered("search_and_tap")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error searching and tapping "${term}": ${toError(error).message}`
+                `Error searching and tapping "${termArg ?? query ?? ""}": ${toError(error).message}`
               ),
             },
           ],
@@ -1335,8 +1394,8 @@ if (!isToolFiltered("ui_type_in_field")) {
           );
         }
 
-        const tapX = roundToDecimals(center.x, 1);
-        const tapY = roundToDecimals(center.y, 1);
+        const tapX = Math.round(center.x);
+        const tapY = Math.round(center.y);
 
         const { stderr: tapError } = await idb(
           "ui",
@@ -1405,12 +1464,12 @@ if (!isToolFiltered("ui_swipe")) {
         .regex(UDID_REGEX)
         .optional()
         .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      x_start: z.number().describe("The starting x-coordinate"),
-      y_start: z.number().describe("The starting y-coordinate"),
-      x_end: z.number().describe("The ending x-coordinate"),
-      y_end: z.number().describe("The ending y-coordinate"),
+      x_start: z.coerce.number().describe("The starting x-coordinate"),
+      y_start: z.coerce.number().describe("The starting y-coordinate"),
+      x_end: z.coerce.number().describe("The ending x-coordinate"),
+      y_end: z.coerce.number().describe("The ending y-coordinate"),
       delta: z
-        .number()
+        .coerce.number()
         .optional()
         .describe("The size of each step in the swipe (default is 1)")
         .default(1),
@@ -1482,8 +1541,8 @@ if (!isToolFiltered("ui_describe_point")) {
         .regex(UDID_REGEX)
         .optional()
         .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      x: z.number().describe("The x-coordinate"),
-      y: z.number().describe("The y-coordinate"),
+      x: z.coerce.number().describe("The x-coordinate"),
+      y: z.coerce.number().describe("The y-coordinate"),
     },
     { title: "Describe UI Point", readOnlyHint: true, openWorldHint: true },
     async ({ udid, x, y }) => {
