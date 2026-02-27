@@ -918,7 +918,7 @@ if (!isToolFiltered("ui_describe_all")) {
 if (!isToolFiltered("ui_describe_search")) {
   server.tool(
     "ui_describe_search",
-    "Describes accessibility info for elements whose labels match a search term, returning only matching elements and their parents",
+    "Describes accessibility info for elements whose labels match 'term', returning only matching elements and their parents",
     {
       term: z
         .string()
@@ -1025,7 +1025,7 @@ if (!isToolFiltered("ui_describe_search")) {
 if (!isToolFiltered("ui_tap")) {
   server.tool(
     "ui_tap",
-    "Tap on the screen in the iOS Simulator",
+    "Tap at (x, y) coordinates on the iOS Simulator screen",
     {
       duration: z
         .string()
@@ -1094,7 +1094,7 @@ if (!isToolFiltered("ui_tap")) {
 if (!isToolFiltered("search_and_tap")) {
   server.tool(
     "search_and_tap",
-    "Search accessibility labels and tap the only matching element",
+    "Search accessibility labels by 'term' and tap the only matching element",
     {
       term: z
         .string()
@@ -1452,7 +1452,7 @@ if (!isToolFiltered("ui_type_in_field")) {
 if (!isToolFiltered("ui_swipe")) {
   server.tool(
     "ui_swipe",
-    "Swipe on the screen in the iOS Simulator",
+    "Swipe on the screen in the iOS Simulator. Use x_start, y_start, x_end, y_end for coordinates.",
     {
       duration: z
         .string()
@@ -1464,10 +1464,14 @@ if (!isToolFiltered("ui_swipe")) {
         .regex(UDID_REGEX)
         .optional()
         .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      x_start: z.coerce.number().describe("The starting x-coordinate"),
-      y_start: z.coerce.number().describe("The starting y-coordinate"),
-      x_end: z.coerce.number().describe("The ending x-coordinate"),
-      y_end: z.coerce.number().describe("The ending y-coordinate"),
+      x_start: z.coerce.number().optional().describe("The starting x-coordinate"),
+      y_start: z.coerce.number().optional().describe("The starting y-coordinate"),
+      x_end: z.coerce.number().optional().describe("The ending x-coordinate"),
+      y_end: z.coerce.number().optional().describe("The ending y-coordinate"),
+      startX: z.coerce.number().optional().describe("Alias for x_start"),
+      startY: z.coerce.number().optional().describe("Alias for y_start"),
+      endX: z.coerce.number().optional().describe("Alias for x_end"),
+      endY: z.coerce.number().optional().describe("Alias for y_end"),
       delta: z
         .coerce.number()
         .optional()
@@ -1475,16 +1479,34 @@ if (!isToolFiltered("ui_swipe")) {
         .default(1),
     },
     { title: "UI Swipe", readOnlyHint: false, openWorldHint: true },
-    async ({ duration, udid, x_start, y_start, x_end, y_end, delta }) => {
+    async ({ duration, udid, x_start, y_start, x_end, y_end, startX, startY, endX, endY, delta }) => {
       try {
+        const resolvedXStart = x_start ?? startX;
+        const resolvedYStart = y_start ?? startY;
+        const resolvedXEnd = x_end ?? endX;
+        const resolvedYEnd = y_end ?? endY;
+        const usedAlias = (!x_start && !!startX) || (!y_start && !!startY) || (!x_end && !!endX) || (!y_end && !!endY);
+
+        if (resolvedXStart == null || resolvedYStart == null || resolvedXEnd == null || resolvedYEnd == null) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: 'Missing required coordinates. Provide x_start, y_start, x_end, and y_end.',
+              },
+            ],
+          };
+        }
+
         const actualUdid = await getBootedDeviceId(udid);
 
-        const rXStart = Math.round(x_start);
-        const rYStart = Math.round(y_start);
-        const rXEnd = Math.round(x_end);
-        const rYEnd = Math.round(y_end);
+        const rXStart = Math.round(resolvedXStart);
+        const rYStart = Math.round(resolvedYStart);
+        const rXEnd = Math.round(resolvedXEnd);
+        const rYEnd = Math.round(resolvedYEnd);
         const wasRounded =
-          rXStart !== x_start || rYStart !== y_start || rXEnd !== x_end || rYEnd !== y_end;
+          rXStart !== resolvedXStart || rYStart !== resolvedYStart || rXEnd !== resolvedXEnd || rYEnd !== resolvedYEnd;
 
         const { stderr } = await idb(
           "ui",
@@ -1506,9 +1528,12 @@ if (!isToolFiltered("ui_swipe")) {
 
         if (stderr) throw new Error(stderr);
 
-        const message = wasRounded
+        let message = wasRounded
           ? `Swiped successfully. Warning: Decimals rounded to nearest integer.`
           : "Swiped successfully";
+        if (usedAlias) {
+          message += '\nFYI: The parameter names are x_start, y_start, x_end, y_end (not startX/endX style).';
+        }
 
         return {
           isError: false,
@@ -1534,7 +1559,7 @@ if (!isToolFiltered("ui_swipe")) {
 if (!isToolFiltered("ui_describe_point")) {
   server.tool(
     "ui_describe_point",
-    "Returns the accessibility element at given co-ordinates on the iOS Simulator's screen",
+    "Returns the accessibility element at (x, y) coordinates on the iOS Simulator's screen",
     {
       udid: z
         .string()
