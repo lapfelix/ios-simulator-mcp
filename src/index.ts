@@ -389,6 +389,14 @@ const PARAM_ALIASES: Record<string, string> = {
   displayMode: "compression",
   display_mode: "compression",
   mode: "compression",
+
+  // wait (tap_wait_and_describe)
+  delay: "wait",
+  wait_time: "wait",
+  waitTime: "wait",
+  pause: "wait",
+  timeout: "wait",
+  sleep: "wait",
 };
 
 /**
@@ -1185,20 +1193,22 @@ if (!isToolFiltered("ui_describe_all")) {
           "--nested"
         );
 
-        const mode = (args.compression as UiCompressionMode | undefined) ?? DEFAULT_UI_COMPRESSION_MODE;
-        if (mode === "raw") {
-          return {
-            isError: false,
-            content: [{ type: "text", text: stdout + aliasHint }],
-          };
-        }
-
         const uiData = JSON.parse(stdout);
-        const compressed = compressUiTree(uiData, mode);
+        const screenFrame = uiData[0]?.frame;
+        const base64Data = await captureCompressedScreenshot(
+          actualUdid,
+          screenFrame ? { width: screenFrame.width, height: screenFrame.height } : undefined
+        );
+
+        const mode = (args.compression as UiCompressionMode | undefined) ?? DEFAULT_UI_COMPRESSION_MODE;
+        const treeText = mode === "raw" ? stdout : JSON.stringify(compressUiTree(uiData, mode));
 
         return {
           isError: false,
-          content: [{ type: "text", text: JSON.stringify(compressed) + aliasHint }],
+          content: [
+            { type: "image", data: base64Data, mimeType: "image/jpeg" },
+            { type: "text", text: treeText + aliasHint },
+          ],
         };
       } catch (error) {
         return {
@@ -1269,21 +1279,22 @@ if (!isToolFiltered("ui_describe_search")) {
         );
 
         const uiData = JSON.parse(stdout);
+        const screenFrame = uiData[0]?.frame;
+        const base64Data = await captureCompressedScreenshot(
+          actualUdid,
+          screenFrame ? { width: screenFrame.width, height: screenFrame.height } : undefined
+        );
+
         const filtered = filterUiTree(uiData, term);
         const mode = (args.compression as UiCompressionMode | undefined) ?? DEFAULT_UI_COMPRESSION_MODE;
-
-        if (mode === "raw") {
-          return {
-            isError: false,
-            content: [{ type: "text", text: JSON.stringify(filtered) + aliasHint }],
-          };
-        }
-
-        const compressed = compressUiTree(filtered, mode);
+        const treeText = mode === "raw" ? JSON.stringify(filtered) : JSON.stringify(compressUiTree(filtered, mode));
 
         return {
           isError: false,
-          content: [{ type: "text", text: JSON.stringify(compressed) + aliasHint }],
+          content: [
+            { type: "image", data: base64Data, mimeType: "image/jpeg" },
+            { type: "text", text: treeText + aliasHint },
+          ],
         };
       } catch (error) {
         return {
@@ -1540,6 +1551,113 @@ if (!isToolFiltered("search_and_tap")) {
               type: "text",
               text: errorWithTroubleshooting(
                 `Error searching and tapping "${(rawArgs as Record<string, unknown>).term ?? (rawArgs as Record<string, unknown>).query ?? ""}": ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
+if (!isToolFiltered("tap_wait_and_describe")) {
+  server.tool(
+    "tap_wait_and_describe",
+    "Tap at (x, y) coordinates, wait for UI to settle, then return a screenshot and full accessibility tree",
+    withAliases({
+      x: z.coerce.number().describe("The x-coordinate to tap"),
+      y: z.coerce.number().describe("The y-coordinate to tap"),
+      duration: z
+        .string()
+        .regex(/^\d+(\.\d+)?$/)
+        .optional()
+        .describe("Tap hold duration in seconds"),
+      wait: z
+        .coerce.number()
+        .optional()
+        .describe("Seconds to wait after tap before capturing UI state (default: 2)"),
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      compression: z
+        .enum(UI_COMPRESSION_MODES)
+        .optional()
+        .describe(
+          "Compression mode for the returned tree. raw, compact, compact_full_precision, table, or table_dedup. Default: compact."
+        ),
+    }),
+    { title: "Tap Wait And Describe", readOnlyHint: false, openWorldHint: true },
+    async (rawArgs) => {
+      try {
+        const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
+        const x = args.x as number;
+        const y = args.y as number;
+        const duration = args.duration as string | undefined;
+        const waitSeconds = (args.wait as number | undefined) ?? 2;
+        const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
+
+        const roundedX = Math.round(x);
+        const roundedY = Math.round(y);
+
+        // 1. Tap
+        const { stderr } = await idb(
+          "ui",
+          "tap",
+          "--udid",
+          actualUdid,
+          ...(duration ? ["--duration", duration] : []),
+          "--json",
+          "--",
+          String(roundedX),
+          String(roundedY)
+        );
+        if (stderr) throw new Error(stderr);
+
+        // 2. Wait for UI to settle
+        await new Promise((r) => setTimeout(r, waitSeconds * 1000));
+
+        // 3. Describe the UI
+        const { stdout } = await idb(
+          "ui",
+          "describe-all",
+          "--udid",
+          actualUdid,
+          "--json",
+          "--nested"
+        );
+        const uiData = JSON.parse(stdout);
+
+        // 4. Screenshot
+        const screenFrame = uiData[0]?.frame;
+        const base64Data = await captureCompressedScreenshot(
+          actualUdid,
+          screenFrame ? { width: screenFrame.width, height: screenFrame.height } : undefined
+        );
+
+        // 5. Compress UI tree
+        const mode = (args.compression as UiCompressionMode | undefined) ?? DEFAULT_UI_COMPRESSION_MODE;
+        const treeText = mode === "raw" ? stdout : JSON.stringify(compressUiTree(uiData, mode));
+
+        const tapMessage = `Tapped (${roundedX}, ${roundedY}), waited ${waitSeconds}s`;
+
+        return {
+          isError: false,
+          content: [
+            { type: "text", text: tapMessage + aliasHint },
+            { type: "image", data: base64Data, mimeType: "image/jpeg" },
+            { type: "text", text: treeText },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error in tap_wait_and_describe: ${toError(error).message}`
               ),
             },
           ],
@@ -1878,6 +1996,76 @@ if (!isToolFiltered("ui_describe_point")) {
   );
 }
 
+/**
+ * Captures a compressed screenshot of the simulator and returns it as a base64 JPEG.
+ * If screenFrame is provided, uses those dimensions; otherwise fetches them via describe-all.
+ */
+async function captureCompressedScreenshot(
+  udid: string,
+  screenFrame?: { width: number; height: number }
+): Promise<string> {
+  let pointWidth: number;
+  let pointHeight: number;
+
+  if (screenFrame) {
+    pointWidth = screenFrame.width;
+    pointHeight = screenFrame.height;
+  } else {
+    const { stdout: uiDescribeOutput } = await idb(
+      "ui",
+      "describe-all",
+      "--udid",
+      udid,
+      "--json",
+      "--nested"
+    );
+    const uiData = JSON.parse(uiDescribeOutput);
+    const frame = uiData[0]?.frame;
+    if (!frame) {
+      throw new Error("Could not determine screen dimensions");
+    }
+    pointWidth = frame.width;
+    pointHeight = frame.height;
+  }
+
+  const ts = Date.now();
+  const rawPng = path.join(TMP_ROOT_DIR, `ui-view-${ts}-raw.png`);
+  const compressedJpg = path.join(TMP_ROOT_DIR, `ui-view-${ts}-compressed.jpg`);
+
+  try {
+    await run("xcrun", [
+      "simctl",
+      "io",
+      udid,
+      "screenshot",
+      "--type=png",
+      "--",
+      rawPng,
+    ]);
+
+    await run("sips", [
+      "-z",
+      String(pointHeight),
+      String(pointWidth),
+      "-s",
+      "format",
+      "jpeg",
+      "-s",
+      "formatOptions",
+      "80",
+      rawPng,
+      "--out",
+      compressedJpg,
+    ]);
+
+    const imageData = fs.readFileSync(compressedJpg);
+    return imageData.toString("base64");
+  } finally {
+    try { fs.unlinkSync(rawPng); } catch {}
+    try { fs.unlinkSync(compressedJpg); } catch {}
+  }
+}
+
 if (!isToolFiltered("ui_view")) {
   server.tool(
     "ui_view",
@@ -1893,64 +2081,7 @@ if (!isToolFiltered("ui_view")) {
     async ({ udid }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
-
-        // Get screen dimensions in points from ui_describe_all
-        const { stdout: uiDescribeOutput } = await idb(
-          "ui",
-          "describe-all",
-          "--udid",
-          actualUdid,
-          "--json",
-          "--nested"
-        );
-
-        const uiData = JSON.parse(uiDescribeOutput);
-        const screenFrame = uiData[0]?.frame;
-        if (!screenFrame) {
-          throw new Error("Could not determine screen dimensions");
-        }
-
-        const pointWidth = screenFrame.width;
-        const pointHeight = screenFrame.height;
-
-        // Generate unique file names with timestamp
-        const ts = Date.now();
-        const rawPng = path.join(TMP_ROOT_DIR, `ui-view-${ts}-raw.png`);
-        const compressedJpg = path.join(
-          TMP_ROOT_DIR,
-          `ui-view-${ts}-compressed.jpg`
-        );
-
-        // Capture screenshot as PNG
-        await run("xcrun", [
-          "simctl",
-          "io",
-          actualUdid,
-          "screenshot",
-          "--type=png",
-          "--",
-          rawPng,
-        ]);
-
-        // Resize to match point dimensions and compress to JPEG using sips
-        await run("sips", [
-          "-z",
-          String(pointHeight), // height in points
-          String(pointWidth), // width in points
-          "-s",
-          "format",
-          "jpeg",
-          "-s",
-          "formatOptions",
-          "80", // 80% quality
-          rawPng,
-          "--out",
-          compressedJpg,
-        ]);
-
-        // Read and encode the compressed image
-        const imageData = fs.readFileSync(compressedJpg);
-        const base64Data = imageData.toString("base64");
+        const base64Data = await captureCompressedScreenshot(actualUdid);
 
         return {
           isError: false,
