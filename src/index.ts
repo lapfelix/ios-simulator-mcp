@@ -1581,7 +1581,7 @@ if (!isToolFiltered("search_and_tap")) {
           throw new Error(
             `Element "${getNodeLabel(
               target
-            )}" is obstructed by "${getNodeLabel(pointNode)}" at (${tapX}, ${tapY}).`
+            )}" is obstructed by "${getNodeLabel(pointNode)}" at (${tapX}, ${tapY}). Try ui_scroll to reveal it, or use ui_describe_all to find an unobstructed element.`
           );
         }
 
