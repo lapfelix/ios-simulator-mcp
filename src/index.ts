@@ -763,6 +763,51 @@ function buildStringTable(value: unknown): { s: string[]; n: unknown } {
   return { s: strings, n: walk(value) };
 }
 
+/**
+ * Removes nodes whose frames are entirely outside the visible screen area.
+ * Keeps nodes without frames (structural) and nodes with on-screen children.
+ */
+function pruneOffScreenNodes(
+  value: unknown,
+  screenWidth: number,
+  screenHeight: number
+): unknown {
+  const overlapsScreen = (node: Record<string, unknown>): boolean => {
+    const frame = getNodeFrame(node);
+    if (!frame) return true;
+    return (
+      frame.x + frame.width > 0 &&
+      frame.x < screenWidth &&
+      frame.y + frame.height > 0 &&
+      frame.y < screenHeight
+    );
+  };
+
+  const visit = (node: unknown): unknown | null => {
+    if (Array.isArray(node)) {
+      return node.map(visit).filter((n): n is unknown => n !== null);
+    }
+    if (!isPlainObject(node)) return node;
+
+    const onScreen = overlapsScreen(node);
+    const rawChildren = node.children;
+
+    if (Array.isArray(rawChildren)) {
+      const filteredChildren = rawChildren
+        .map(visit)
+        .filter((n): n is unknown => n !== null);
+      if (!onScreen && filteredChildren.length === 0) return null;
+      const result = { ...node };
+      result.children = filteredChildren;
+      return result;
+    }
+
+    return onScreen ? node : null;
+  };
+
+  return visit(value);
+}
+
 function compressUiTree(value: unknown, mode: UiCompressionMode): unknown {
   if (mode === "raw") {
     return value;
@@ -1140,7 +1185,7 @@ if (!isToolFiltered("open_simulator")) {
           content: [
             {
               type: "text",
-              text: "Simulator.app opened successfully",
+              text: "Simulator opened",
             },
           ],
         };
@@ -1164,7 +1209,7 @@ if (!isToolFiltered("open_simulator")) {
 if (!isToolFiltered("ui_describe_all")) {
   server.tool(
     "ui_describe_all",
-    "Describes accessibility information for the entire screen in the iOS Simulator",
+    "Returns screenshot + accessibility tree for visible on-screen elements. Use to understand current screen state.",
     withAliases({
       udid: z
         .string()
@@ -1177,12 +1222,19 @@ if (!isToolFiltered("ui_describe_all")) {
         .describe(
           "Compression mode for the returned tree. raw, compact, compact_full_precision, table, or table_dedup. Default: compact."
         ),
+      include_off_screen_elements: z
+        .boolean()
+        .optional()
+        .describe(
+          "Include elements outside the visible screen area (default: false). Enable for maps or content that extends beyond the viewport."
+        ),
     }),
     { title: "Describe All UI Elements", readOnlyHint: true, openWorldHint: true },
     async (rawArgs) => {
       try {
         const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
         const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
+        const includeOffScreen = args.include_off_screen_elements as boolean | undefined;
 
         const { stdout } = await idb(
           "ui",
@@ -1195,21 +1247,24 @@ if (!isToolFiltered("ui_describe_all")) {
 
         const uiData = JSON.parse(stdout);
         const screenFrame = uiData[0]?.frame;
-        const base64Data = await captureCompressedScreenshot(
+        const visibleData = (!includeOffScreen && screenFrame)
+          ? pruneOffScreenNodes(uiData, screenFrame.width, screenFrame.height)
+          : uiData;
+        const base64Data = await tryCapture(
           actualUdid,
           screenFrame ? { width: screenFrame.width, height: screenFrame.height } : undefined
         );
 
         const mode = (args.compression as UiCompressionMode | undefined) ?? DEFAULT_UI_COMPRESSION_MODE;
-        const treeText = mode === "raw" ? stdout : JSON.stringify(compressUiTree(uiData, mode));
+        const treeText = mode === "raw" ? JSON.stringify(visibleData) : JSON.stringify(compressUiTree(visibleData, mode));
 
-        return {
-          isError: false,
-          content: [
-            { type: "image", data: base64Data, mimeType: "image/jpeg" },
-            { type: "text", text: treeText + aliasHint },
-          ],
-        };
+        const content: ({ type: "image"; data: string; mimeType: "image/jpeg" } | { type: "text"; text: string })[] = [];
+        if (base64Data) {
+          content.push({ type: "image" as const, data: base64Data, mimeType: "image/jpeg" as const });
+        }
+        content.push({ type: "text" as const, text: treeText + aliasHint });
+
+        return { isError: false, content };
       } catch (error) {
         return {
           isError: true,
@@ -1230,7 +1285,7 @@ if (!isToolFiltered("ui_describe_all")) {
 if (!isToolFiltered("ui_describe_search")) {
   server.tool(
     "ui_describe_search",
-    "Describes accessibility info for elements whose labels match 'term', returning only matching elements and their parents",
+    "Search visible UI elements by label text. Returns screenshot + filtered accessibility tree with only matches and their parents.",
     withAliases({
       term: z
         .string()
@@ -1249,12 +1304,19 @@ if (!isToolFiltered("ui_describe_search")) {
         .describe(
           "Compression mode for the returned tree. raw, compact, compact_full_precision, table, or table_dedup. Default: compact."
         ),
+      include_off_screen_elements: z
+        .boolean()
+        .optional()
+        .describe(
+          "Include elements outside the visible screen area (default: false). Enable for maps or content that extends beyond the viewport."
+        ),
     }),
     { title: "Search UI Elements", readOnlyHint: true, openWorldHint: true },
     async (rawArgs) => {
       try {
         const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
         const term = args.term as string | undefined;
+        const includeOffScreen = args.include_off_screen_elements as boolean | undefined;
         if (!term) {
           return {
             isError: true,
@@ -1280,22 +1342,25 @@ if (!isToolFiltered("ui_describe_search")) {
 
         const uiData = JSON.parse(stdout);
         const screenFrame = uiData[0]?.frame;
-        const base64Data = await captureCompressedScreenshot(
+        const visibleData = (!includeOffScreen && screenFrame)
+          ? pruneOffScreenNodes(uiData, screenFrame.width, screenFrame.height)
+          : uiData;
+        const base64Data = await tryCapture(
           actualUdid,
           screenFrame ? { width: screenFrame.width, height: screenFrame.height } : undefined
         );
 
-        const filtered = filterUiTree(uiData, term);
+        const filtered = filterUiTree(visibleData, term);
         const mode = (args.compression as UiCompressionMode | undefined) ?? DEFAULT_UI_COMPRESSION_MODE;
         const treeText = mode === "raw" ? JSON.stringify(filtered) : JSON.stringify(compressUiTree(filtered, mode));
 
-        return {
-          isError: false,
-          content: [
-            { type: "image", data: base64Data, mimeType: "image/jpeg" },
-            { type: "text", text: treeText + aliasHint },
-          ],
-        };
+        const content: ({ type: "image"; data: string; mimeType: "image/jpeg" } | { type: "text"; text: string })[] = [];
+        if (base64Data) {
+          content.push({ type: "image" as const, data: base64Data, mimeType: "image/jpeg" as const });
+        }
+        content.push({ type: "text" as const, text: treeText + aliasHint });
+
+        return { isError: false, content };
       } catch (error) {
         return {
           isError: true,
@@ -1316,13 +1381,12 @@ if (!isToolFiltered("ui_describe_search")) {
 if (!isToolFiltered("ui_tap")) {
   server.tool(
     "ui_tap",
-    "Tap at (x, y) coordinates on the iOS Simulator screen",
+    "Tap at (x, y). Returns no screen state - use tap_wait_and_describe instead if you need to see the result.",
     withAliases({
       duration: z
-        .string()
-        .regex(/^\d+(\.\d+)?$/)
+        .union([z.number(), z.string()])
         .optional()
-        .describe("Press duration"),
+        .describe("Press duration in seconds (e.g. 1 or 0.5)"),
       udid: z
         .string()
         .regex(UDID_REGEX)
@@ -1337,7 +1401,7 @@ if (!isToolFiltered("ui_tap")) {
         const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
         const x = args.x as number;
         const y = args.y as number;
-        const duration = args.duration as string | undefined;
+        const duration = args.duration != null ? String(args.duration) : undefined;
         const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
 
         const roundedX = Math.round(x);
@@ -1361,9 +1425,7 @@ if (!isToolFiltered("ui_tap")) {
 
         if (stderr) throw new Error(stderr);
 
-        const message = wasRounded
-          ? `Tapped successfully at (${roundedX}, ${roundedY}). Warning: Decimals rounded to nearest integer.`
-          : "Tapped successfully";
+        const message = `Tapped (${roundedX}, ${roundedY})`;
 
         return {
           isError: false,
@@ -1389,7 +1451,7 @@ if (!isToolFiltered("ui_tap")) {
 if (!isToolFiltered("search_and_tap")) {
   server.tool(
     "search_and_tap",
-    "Search accessibility labels by 'term' and tap the only matching element",
+    "Search by label and tap if exactly one match. Fails with coordinates if multiple matches - use ui_tap to pick one.",
     withAliases({
       term: z
         .string()
@@ -1403,17 +1465,16 @@ if (!isToolFiltered("search_and_tap")) {
         .optional()
         .describe("Udid of target, can also be set with the IDB_UDID env var"),
       duration: z
-        .string()
-        .regex(/^\d+(\.\d+)?$/)
+        .union([z.number(), z.string()])
         .optional()
-        .describe("Press duration"),
+        .describe("Press duration in seconds (e.g. 1 or 0.5)"),
     }),
     { title: "Search And Tap", readOnlyHint: false, openWorldHint: true },
     async (rawArgs) => {
       try {
         const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
         const term = args.term as string | undefined;
-        const duration = args.duration as string | undefined;
+        const duration = args.duration != null ? String(args.duration) : undefined;
         if (!term) {
           return {
             isError: true,
@@ -1462,14 +1523,18 @@ if (!isToolFiltered("search_and_tap")) {
         }
 
         if (matches.length > 1) {
-          const labels = matches
+          const details = matches
             .slice(0, 5)
-            .map((node) => getNodeLabel(node))
+            .map((node) => {
+              const label = getNodeLabel(node);
+              const center = getNodeFrameCenter(node);
+              return center
+                ? `"${label}" at (${Math.round(center.x)}, ${Math.round(center.y)})`
+                : `"${label}"`;
+            })
             .join(", ");
           throw new Error(
-            labels.length > 0
-              ? `Multiple matching elements found for "${term}": ${labels}`
-              : `Multiple matching elements found for "${term}".`
+            `${matches.length} matches for "${term}": ${details}. Use a more specific term or ui_tap with coordinates.`
           );
         }
 
@@ -1563,15 +1628,14 @@ if (!isToolFiltered("search_and_tap")) {
 if (!isToolFiltered("tap_wait_and_describe")) {
   server.tool(
     "tap_wait_and_describe",
-    "Tap at (x, y) coordinates, wait for UI to settle, then return a screenshot and full accessibility tree",
+    "Tap at (x, y), wait for UI to settle, then return screenshot + accessibility tree. Preferred over ui_tap when you need to see the result.",
     withAliases({
       x: z.coerce.number().describe("The x-coordinate to tap"),
       y: z.coerce.number().describe("The y-coordinate to tap"),
       duration: z
-        .string()
-        .regex(/^\d+(\.\d+)?$/)
+        .union([z.number(), z.string()])
         .optional()
-        .describe("Tap hold duration in seconds"),
+        .describe("Tap hold duration in seconds (e.g. 1 or 0.5)"),
       wait: z
         .coerce.number()
         .optional()
@@ -1587,6 +1651,12 @@ if (!isToolFiltered("tap_wait_and_describe")) {
         .describe(
           "Compression mode for the returned tree. raw, compact, compact_full_precision, table, or table_dedup. Default: compact."
         ),
+      include_off_screen_elements: z
+        .boolean()
+        .optional()
+        .describe(
+          "Include elements outside the visible screen area (default: false). Enable for maps or content that extends beyond the viewport."
+        ),
     }),
     { title: "Tap Wait And Describe", readOnlyHint: false, openWorldHint: true },
     async (rawArgs) => {
@@ -1594,8 +1664,9 @@ if (!isToolFiltered("tap_wait_and_describe")) {
         const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
         const x = args.x as number;
         const y = args.y as number;
-        const duration = args.duration as string | undefined;
+        const duration = args.duration != null ? String(args.duration) : undefined;
         const waitSeconds = (args.wait as number | undefined) ?? 2;
+        const includeOffScreen = args.include_off_screen_elements as boolean | undefined;
         const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
 
         const roundedX = Math.round(x);
@@ -1631,25 +1702,28 @@ if (!isToolFiltered("tap_wait_and_describe")) {
 
         // 4. Screenshot
         const screenFrame = uiData[0]?.frame;
-        const base64Data = await captureCompressedScreenshot(
+        const visibleData = (!includeOffScreen && screenFrame)
+          ? pruneOffScreenNodes(uiData, screenFrame.width, screenFrame.height)
+          : uiData;
+        const base64Data = await tryCapture(
           actualUdid,
           screenFrame ? { width: screenFrame.width, height: screenFrame.height } : undefined
         );
 
         // 5. Compress UI tree
         const mode = (args.compression as UiCompressionMode | undefined) ?? DEFAULT_UI_COMPRESSION_MODE;
-        const treeText = mode === "raw" ? stdout : JSON.stringify(compressUiTree(uiData, mode));
+        const treeText = mode === "raw" ? JSON.stringify(visibleData) : JSON.stringify(compressUiTree(visibleData, mode));
 
         const tapMessage = `Tapped (${roundedX}, ${roundedY}), waited ${waitSeconds}s`;
 
-        return {
-          isError: false,
-          content: [
-            { type: "text", text: tapMessage + aliasHint },
-            { type: "image", data: base64Data, mimeType: "image/jpeg" },
-            { type: "text", text: treeText },
-          ],
-        };
+        const content: ({ type: "image"; data: string; mimeType: "image/jpeg" } | { type: "text"; text: string })[] = [];
+        content.push({ type: "text" as const, text: tapMessage + aliasHint });
+        if (base64Data) {
+          content.push({ type: "image" as const, data: base64Data, mimeType: "image/jpeg" as const });
+        }
+        content.push({ type: "text" as const, text: treeText });
+
+        return { isError: false, content };
       } catch (error) {
         return {
           isError: true,
@@ -1670,7 +1744,7 @@ if (!isToolFiltered("tap_wait_and_describe")) {
 if (!isToolFiltered("ui_type")) {
   server.tool(
     "ui_type",
-    "Input 'text' into the iOS Simulator",
+    "Type text into the currently focused field. Tap a field first or use ui_type_in_field to find and focus one.",
     withAliases({
       udid: z
         .string()
@@ -1706,7 +1780,7 @@ if (!isToolFiltered("ui_type")) {
 
         return {
           isError: false,
-          content: [{ type: "text", text: "Typed successfully" + aliasHint }],
+          content: [{ type: "text", text: "Typed" + aliasHint }],
         };
       } catch (error) {
         return {
@@ -1730,7 +1804,7 @@ if (!isToolFiltered("ui_type")) {
 if (!isToolFiltered("ui_type_in_field")) {
   server.tool(
     "ui_type_in_field",
-    "Find a text input field by 'field_query' label, focus it, and type 'text' into it",
+    "Find a text field by label, tap to focus it, and type text. Preferred over ui_type when the field isn't already focused.",
     withAliases({
       udid: z
         .string()
@@ -1823,9 +1897,7 @@ if (!isToolFiltered("ui_type_in_field")) {
           content: [
             {
               type: "text",
-              text: `Typed successfully into "${getNodeLabel(
-                target
-              )}" at (${tapX}, ${tapY})` + aliasHint,
+              text: `Typed into "${getNodeLabel(target)}" at (${tapX}, ${tapY})` + aliasHint,
             },
           ],
         };
@@ -1849,13 +1921,12 @@ if (!isToolFiltered("ui_type_in_field")) {
 if (!isToolFiltered("ui_swipe")) {
   server.tool(
     "ui_swipe",
-    "Swipe from (x_start, y_start) to (x_end, y_end) on the iOS Simulator screen",
+    "Swipe from (x_start, y_start) to (x_end, y_end). For simple scrolling, use ui_scroll instead.",
     withAliases({
       duration: z
-        .string()
-        .regex(/^\d+(\.\d+)?$/)
+        .union([z.number(), z.string()])
         .optional()
-        .describe("Swipe duration in seconds (e.g., 0.1)"),
+        .describe("Swipe duration in seconds (e.g. 1 or 0.5)"),
       udid: z
         .string()
         .regex(UDID_REGEX)
@@ -1879,7 +1950,7 @@ if (!isToolFiltered("ui_swipe")) {
         const y_start = args.y_start as number;
         const x_end = args.x_end as number;
         const y_end = args.y_end as number;
-        const duration = args.duration as string | undefined;
+        const duration = args.duration != null ? String(args.duration) : undefined;
         const delta = args.delta as number | undefined;
         const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
 
@@ -1910,9 +1981,7 @@ if (!isToolFiltered("ui_swipe")) {
 
         if (stderr) throw new Error(stderr);
 
-        const message = wasRounded
-          ? `Swiped successfully. Warning: Decimals rounded to nearest integer.`
-          : "Swiped successfully";
+        const message = `Swiped (${rXStart},${rYStart}) to (${rXEnd},${rYEnd})`;
 
         return {
           isError: false,
@@ -1935,10 +2004,117 @@ if (!isToolFiltered("ui_swipe")) {
   );
 }
 
+if (!isToolFiltered("ui_scroll")) {
+  server.tool(
+    "ui_scroll",
+    "Scroll the screen in a direction. Use instead of ui_swipe when you just want to scroll content. Provide x/y to target a specific scrollable area.",
+    withAliases({
+      direction: z
+        .enum(["up", "down", "left", "right"])
+        .describe(
+          "Scroll direction: 'down' reveals content below, 'up' reveals content above"
+        ),
+      amount: z
+        .coerce.number()
+        .optional()
+        .describe(
+          "Scroll distance in points (default: 300). Smaller values for precise scrolling."
+        ),
+      x: z
+        .coerce.number()
+        .optional()
+        .describe(
+          "X-coordinate center of the scrollable area (default: screen center). Use to target a specific scroll view."
+        ),
+      y: z
+        .coerce.number()
+        .optional()
+        .describe(
+          "Y-coordinate center of the scrollable area (default: screen center). Use to target a specific scroll view."
+        ),
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+    }),
+    { title: "Scroll Screen", readOnlyHint: false, openWorldHint: true },
+    async (rawArgs) => {
+      try {
+        const { resolved: args, aliasHint } = resolveAliases(rawArgs as Record<string, unknown>);
+        const direction = args.direction as string;
+        const amount = (args.amount as number | undefined) ?? 300;
+        const actualUdid = await getBootedDeviceId(args.udid as string | undefined);
+
+        // Get screen dimensions
+        const { stdout: describeOut } = await idb(
+          "ui", "describe-all", "--udid", actualUdid, "--json", "--nested"
+        );
+        const uiData = JSON.parse(describeOut);
+        const screenFrame = uiData[0]?.frame;
+        const sw = screenFrame?.width ?? 390;
+        const sh = screenFrame?.height ?? 844;
+        const centerX = Math.round((args.x as number | undefined) ?? sw / 2);
+        const centerY = Math.round((args.y as number | undefined) ?? sh / 2);
+
+        let x_start: number, y_start: number, x_end: number, y_end: number;
+
+        switch (direction) {
+          case "down": // finger moves up to scroll content down
+            x_start = centerX; y_start = Math.round(centerY + amount / 2);
+            x_end = centerX; y_end = Math.round(centerY - amount / 2);
+            break;
+          case "up": // finger moves down to scroll content up
+            x_start = centerX; y_start = Math.round(centerY - amount / 2);
+            x_end = centerX; y_end = Math.round(centerY + amount / 2);
+            break;
+          case "left": // finger moves right to scroll content left
+            x_start = Math.round(centerX + amount / 2); y_start = centerY;
+            x_end = Math.round(centerX - amount / 2); y_end = centerY;
+            break;
+          case "right": // finger moves left to scroll content right
+            x_start = Math.round(centerX - amount / 2); y_start = centerY;
+            x_end = Math.round(centerX + amount / 2); y_end = centerY;
+            break;
+          default:
+            throw new Error(`Invalid direction: ${direction}`);
+        }
+
+        const { stderr } = await idb(
+          "ui", "swipe", "--udid", actualUdid,
+          "--duration", "0.5",
+          "--json", "--",
+          String(x_start), String(y_start),
+          String(x_end), String(y_end)
+        );
+
+        if (stderr) throw new Error(stderr);
+
+        return {
+          isError: false,
+          content: [{ type: "text", text: `Scrolled ${direction}` + aliasHint }],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error scrolling: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
 if (!isToolFiltered("ui_describe_point")) {
   server.tool(
     "ui_describe_point",
-    "Returns the accessibility element at (x, y) coordinates on the iOS Simulator's screen",
+    "Get the accessibility element at (x, y). Use to identify what's at a specific coordinate.",
     withAliases({
       udid: z
         .string()
@@ -1994,6 +2170,29 @@ if (!isToolFiltered("ui_describe_point")) {
       }
     }
   );
+}
+
+const SCREENSHOT_TIMEOUT_MS = 10_000;
+
+/**
+ * Attempts to capture a screenshot with a timeout.
+ * Returns the base64 JPEG string on success, or null if it fails/times out.
+ */
+async function tryCapture(
+  udid: string,
+  screenFrame?: { width: number; height: number }
+): Promise<string | null> {
+  try {
+    const result = await Promise.race([
+      captureCompressedScreenshot(udid, screenFrame),
+      new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), SCREENSHOT_TIMEOUT_MS)
+      ),
+    ]);
+    return result;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -2069,7 +2268,7 @@ async function captureCompressedScreenshot(
 if (!isToolFiltered("ui_view")) {
   server.tool(
     "ui_view",
-    "Get the image content of a compressed screenshot of the current simulator view",
+    "Get a screenshot only (no accessibility tree). Use ui_describe_all if you also need element info.",
     {
       udid: z
         .string()
@@ -2093,7 +2292,7 @@ if (!isToolFiltered("ui_view")) {
             },
             {
               type: "text",
-              text: "Screenshot captured",
+              text: "Screenshot",
             },
           ],
         };
@@ -2329,7 +2528,7 @@ if (!isToolFiltered("record_video")) {
           content: [
             {
               type: "text",
-              text: `Recording started. The video will be saved to: ${outputFile}\nTo stop recording, use the stop_recording command.` + aliasHint,
+              text: `Recording to ${outputFile}. Use stop_recording to finish.` + aliasHint,
             },
           ],
         };
@@ -2368,7 +2567,7 @@ if (!isToolFiltered("stop_recording")) {
           content: [
             {
               type: "text",
-              text: "Recording stopped successfully.",
+              text: "Recording stopped",
             },
           ],
         };
@@ -2429,7 +2628,7 @@ if (!isToolFiltered("install_app")) {
           content: [
             {
               type: "text",
-              text: `App installed successfully from: ${absolutePath}` + aliasHint,
+              text: `Installed ${absolutePath}` + aliasHint,
             },
           ],
         };
@@ -2501,8 +2700,8 @@ if (!isToolFiltered("launch_app")) {
             {
               type: "text",
               text: (pid
-                ? `App ${bundle_id} launched successfully with PID: ${pid}`
-                : `App ${bundle_id} launched successfully`) + aliasHint,
+                ? `Launched ${bundle_id} (PID ${pid})`
+                : `Launched ${bundle_id}`) + aliasHint,
             },
           ],
         };
